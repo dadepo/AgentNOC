@@ -1,1 +1,33 @@
 /target
+
+# Environment files
+.env
+.env.*
+
+# BGPalerter related files
+bgpalerter*
+*.pid
+.error
+.reports
+error.log
+reports.log
+error-*.log
+reports-*.log
+config.yml
+config.yaml
+prefixes.yml
+prefixes.yaml
+.cache/
+seen-rpki-valid-announcements.json
+
+# VS Code
+.vscode/
+*.code-workspace
+.vscode-test/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
