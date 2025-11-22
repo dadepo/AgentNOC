@@ -5,20 +5,12 @@
 .env.*
 
 # BGPalerter related files
-bgpalerter*
-*.pid
-.error
-.reports
-error.log
-reports.log
-error-*.log
-reports-*.log
-config.yml
-config.yaml
+bgpalerter/
 prefixes.yml
-prefixes.yaml
-.cache/
-seen-rpki-valid-announcements.json
+
+# Web UI
+web-ui/node_modules
+web-ui/dist
 
 # VS Code
 .vscode/
