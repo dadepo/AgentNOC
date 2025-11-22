@@ -4,6 +4,9 @@
 .env
 .env.*
 
+# Logs
+logs/
+
 # BGPalerter related files
 bgpalerter/
 prefixes.yml
