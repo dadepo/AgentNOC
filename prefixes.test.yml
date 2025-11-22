@@ -1,0 +1,33 @@
+10.0.0.0/8:
+  description: Test network range
+  asn:
+    - 65000
+    - 65001
+  ignoreMorespecifics: false
+  ignore: false
+  group: test
+172.16.0.0/12:
+  description: Private network test
+  asn:
+    - 65002
+  ignoreMorespecifics: true
+  ignore: false
+  group: test
+192.168.1.0/24:
+  description: Ignored test prefix
+  asn:
+    - 65003
+  ignoreMorespecifics: false
+  ignore: true
+  group: test
+options:
+  monitorASns:
+    '65000':
+      group: test
+    '65001':
+      group: test
+    '65002':
+      group: test
+    '65003':
+      group: test
+

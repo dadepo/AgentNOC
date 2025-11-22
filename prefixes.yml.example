@@ -1,0 +1,21 @@
+217.164.0.0/15:
+  description: No description provided (No ROA available)
+  asn:
+    - 5384
+  ignoreMorespecifics: false
+  ignore: false
+  group: noc
+192.0.2.0/24:
+  description: Expected prefix for AS 3333 (for misconfiguration testing)
+  asn:
+    - 3333
+  ignoreMorespecifics: false
+  ignore: false
+  group: noc
+options:
+  monitorASns:
+    '3333':
+      group: noc
+    '5384':
+      group: noc
+      
