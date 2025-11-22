@@ -84,7 +84,10 @@ pub async fn connect_whois(uri: &str) -> Result<MCPConnection> {
     tracing::info!("Connected to WHOIS: {server_info:#?}");
 
     let tools_result = client.list_tools(Default::default()).await?;
-    tracing::info!("Available WHOIS tools: {} tool(s)", tools_result.tools.len());
+    tracing::info!(
+        "Available WHOIS tools: {} tool(s)",
+        tools_result.tools.len()
+    );
 
     let peer = client.peer().to_owned();
 
