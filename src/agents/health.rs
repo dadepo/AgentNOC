@@ -5,44 +5,46 @@ use rig::providers::anthropic;
 use rmcp::ServiceExt;
 use rmcp::model::{ClientCapabilities, ClientInfo, Implementation};
 
-pub async fn run(ip: String) -> Result<String> {
+use crate::config::AppConfig;
+
+pub async fn run(ip: String, config: &AppConfig) -> Result<String> {
     dotenv::dotenv().ok();
 
+    tracing::info!("Starting health check for IP: {}", ip);
+
     let transport =
-        rmcp::transport::StreamableHttpClientTransport::from_uri("http://127.0.0.1:8000/mcp");
+        rmcp::transport::StreamableHttpClientTransport::from_uri(&*config.mcp_server_url);
 
     let client_info = ClientInfo {
-        protocol_version: Default::default(),
+        protocol_version: rmcp::model::ProtocolVersion::V_2024_11_05,
         capabilities: ClientCapabilities::default(),
         client_info: Implementation {
-            name: "rig-core".to_string(),
-            version: "0.13.0".to_string(),
+            name: "noc_agent".to_string(),
+            version: "0.1.0".to_string(),
             ..Default::default()
         },
     };
 
+    tracing::info!("Connecting to whois MCP server...");
     let client = client_info.serve(transport).await.inspect_err(|e| {
         eprintln!("Client error: {:?}", e);
+        tracing::error!("Client connection error: {:?}", e);
     })?;
+    tracing::info!("Successfully connected to MCP server");
 
     // Initialize
     let server_info = client.peer_info();
-    println!("Connected to endpoints!");
     tracing::info!("Connected to endpoints: {server_info:#?}");
 
-    println!("Listing available tools...");
     let tools: Vec<rmcp::model::Tool> = client.list_tools(Default::default()).await?.tools;
 
-    // takes the `OPENAI_API_KEY` as an env var on usage
     let llm_client = anthropic::Client::from_env();
-    println!("Building agent...");
     let agent = llm_client
-            .agent("claude-sonnet-4-5")
+            .agent(&config.llm_model_name)
             .preamble("You are a helpful assistant who has access to a number of tools from an MCP endpoints designed to be used for incrementing and decrementing a counter.")
             .rmcp_tools(tools, client.peer().to_owned())
             .build();
 
-    println!("Sending prompt to agent...");
     let res = agent
         .prompt(format!("What organization owns {ip}"))
         .multi_turn(2)
