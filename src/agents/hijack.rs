@@ -32,7 +32,7 @@ impl HijackAgent {
         let whois_conn = mcp_clients::connect_whois("http://127.0.0.1:8000/mcp").await?;
 
         let completion_model = anthropic::Client::from_env();
-        
+
         let agent = completion_model
             .agent(&config.llm_model_name)
             .preamble(r#"
@@ -43,7 +43,6 @@ impl HijackAgent {
             .rmcp_tools(ripestat_conn.tools, ripestat_conn.peer)
             .rmcp_tools(whois_conn.tools, whois_conn.peer)
             .build();
-
 
         let alert_json = serde_json::to_string_pretty(&alert)?;
         let res = agent
