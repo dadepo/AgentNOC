@@ -28,8 +28,8 @@ impl HijackAgent {
         // Connect to RIPEstat MCP server
         let ripestat_conn = mcp_clients::connect_ripestat().await?;
 
-        // Connect to WHOIS MCP server
-        let whois_conn = mcp_clients::connect_whois("http://127.0.0.1:8000/mcp").await?;
+        // Connect to WHOIS MCP server via stdio
+        let whois_conn = mcp_clients::connect_whois().await?;
 
         let completion_model = anthropic::Client::from_env();
 

@@ -1,5 +1,6 @@
 use color_eyre::Result;
 use rmcp::model::{ClientCapabilities, ClientInfo, Implementation, Tool};
+use rmcp::transport::child_process::TokioChildProcess;
 use rmcp::transport::streamable_http_client::{
     StreamableHttpClientTransport, StreamableHttpClientTransportConfig,
 };
@@ -54,8 +55,8 @@ pub async fn connect_ripestat() -> Result<MCPConnection> {
     })
 }
 
-/// Connect to the WHOIS MCP server and return tools and peer
-pub async fn connect_whois(uri: &str) -> Result<MCPConnection> {
+/// Connect to the WHOIS MCP server via stdio and return tools and peer
+pub async fn connect_whois() -> Result<MCPConnection> {
     let client_info = ClientInfo {
         protocol_version: rmcp::model::ProtocolVersion::V_2024_11_05,
         capabilities: ClientCapabilities::default(),
@@ -66,16 +67,17 @@ pub async fn connect_whois(uri: &str) -> Result<MCPConnection> {
         },
     };
 
-    let http_client = reqwest::Client::new();
-    let transport = StreamableHttpClientTransport::with_client(
-        http_client,
-        StreamableHttpClientTransportConfig {
-            uri: uri.into(),
-            ..Default::default()
-        },
-    );
+    // Spawn the whois MCP server via uvx
+    let mut command = tokio::process::Command::new("uvx");
+    command.args(&[
+        "--from",
+        "git+https://github.com/dadepo/whois-mcp.git",
+        "whois-mcp",
+    ]);
 
-    tracing::info!("Connecting to WHOIS MCP server at {}...", uri);
+    let transport = TokioChildProcess::new(command)?;
+
+    tracing::info!("Connecting to WHOIS MCP server via stdio...");
     let client = client_info.serve(transport).await.inspect_err(|e| {
         tracing::error!("WHOIS client error: {:?}", e);
     })?;
