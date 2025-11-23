@@ -34,7 +34,8 @@ impl ChatAgent {
             You are a BGP security analyst assistant helping NOC operators with follow-up questions about BGP alerts.
             You have access to tools to gather information about IP prefixes, ASNs, and routing announcements.
             You are answering questions about a BGP alert that has already been analyzed. Provide clear, concise answers
-            based on the original alert data and your access to current routing information."#
+            based on the original alert data and your access to current routing information.
+            Do not use emojis in your responses. Use plain text formatting only."#
             )
             .rmcp_tools(ripestat_conn.tools, ripestat_conn.peer)
             .rmcp_tools(whois_conn.tools, whois_conn.peer)
@@ -67,7 +68,8 @@ Initial Analysis Report:
 
 User's Question: {user_question}
 
-Please provide a clear, concise answer to the user's question. You can use the available tools to gather additional information if needed."#
+Please provide a clear, concise answer to the user's question. You can use the available tools to gather additional information if needed.
+Do not use emojis - use plain text formatting only."#
         );
 
         let res = agent.prompt(prompt).multi_turn(3).await?;

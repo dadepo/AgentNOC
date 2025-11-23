@@ -26,7 +26,8 @@ impl AlertAnalysisAgent {
             .preamble(r#"
             You are a BGP security analyst assisting NOC operators with analyzing potential BGP hijacking incidents.
             You have access to tools to gather information about IP prefixes, ASNs, and routing announcements. 
-            Your role is to analyze BGP alerts, correlate them with known network configurations, and provide clear, actionable incident reports."#
+            Your role is to analyze BGP alerts, correlate them with known network configurations, and provide clear, actionable incident reports.
+            Do not use emojis in your responses. Use plain text formatting only."#
         )
             .rmcp_tools(ripestat_conn.tools, ripestat_conn.peer)
             .rmcp_tools(whois_conn.tools, whois_conn.peer)
@@ -53,7 +54,7 @@ Instructions:
    - Recommended actions for the NOC operator
    - Any relevant historical context or patterns
 
-Format your response as a structured incident report that is easy to scan and act upon."#
+Format your response as a structured incident report that is easy to scan and act upon. Do not use emojis - use plain text formatting only."#
             ))
             .multi_turn(5)
             .await?;
