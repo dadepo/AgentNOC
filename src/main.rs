@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
     let log_file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open("logs/noc_agent.log")?;
+        .open("logs/agent_noc.log")?;
 
     tracing_subscriber::fmt()
         .with_writer(log_file)

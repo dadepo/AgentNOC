@@ -1,5 +1,5 @@
 [package]
-name = "noc_agent"
+name = "agent_noc"
 version = "0.1.0"
 edition = "2024"
 

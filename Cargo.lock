@@ -18,6 +18,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "agent_noc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum 0.8.6",
+ "axum-test",
+ "chrono",
+ "color-eyre",
+ "dotenv",
+ "futures",
+ "ipnet",
+ "open",
+ "reqwest",
+ "rig-core",
+ "rmcp 0.8.5",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sqlx",
+ "swarms-rs",
+ "tokio",
+ "tokio-stream",
+ "tower 0.5.2",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1898,35 +1927,6 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
-]
-
-[[package]]
-name = "noc_agent"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum 0.8.6",
- "axum-test",
- "chrono",
- "color-eyre",
- "dotenv",
- "futures",
- "ipnet",
- "open",
- "reqwest",
- "rig-core",
- "rmcp 0.8.5",
- "serde",
- "serde_json",
- "serde_yaml",
- "sqlx",
- "swarms-rs",
- "tokio",
- "tokio-stream",
- "tower 0.5.2",
- "tower-http",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

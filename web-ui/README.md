@@ -1,6 +1,6 @@
-# NOC Agent Web UI
+# AgentNOC Web UI
 
-React-based web interface for the NOC Agent.
+React-based web interface for AgentNOC.
 
 ## Setup
 

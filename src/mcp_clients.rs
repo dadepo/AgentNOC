@@ -20,7 +20,7 @@ pub async fn connect_ripestat() -> Result<MCPConnection> {
         protocol_version: rmcp::model::ProtocolVersion::V_2024_11_05,
         capabilities: ClientCapabilities::default(),
         client_info: Implementation {
-            name: "noc_agent_ripestat".to_string(),
+            name: "agent_noc_ripestat".to_string(),
             version: "0.1.0".to_string(),
             ..Default::default()
         },
@@ -63,7 +63,7 @@ pub async fn connect_whois() -> Result<MCPConnection> {
         protocol_version: rmcp::model::ProtocolVersion::V_2024_11_05,
         capabilities: ClientCapabilities::default(),
         client_info: Implementation {
-            name: "noc_agent_whois".to_string(),
+            name: "agent_noc_whois".to_string(),
             version: "0.1.0".to_string(),
             ..Default::default()
         },

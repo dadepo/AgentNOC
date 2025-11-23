@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 pub async fn init_database() -> Result<Arc<SqlitePool>> {
     // Database file location
-    let db_path = "noc_agent.db";
+    let db_path = "agent_noc.db";
 
     // Create connection pool
     let pool = SqlitePool::connect(&format!("sqlite://{db_path}?mode=rwc")).await?;

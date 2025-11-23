@@ -1,5 +1,5 @@
 {
-  "name": "noc-agent-web-ui",
+  "name": "agent-noc-web-ui",
   "private": true,
   "version": "0.1.0",
   "type": "module",
