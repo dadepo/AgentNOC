@@ -37,7 +37,7 @@ pub async fn run(_config: &AppConfig) -> Result<HealthStatus> {
             health_status.status = "unhealthy".to_string();
             health_status
                 .services
-                .insert("ripestat_mcp".to_string(), format!("error: {}", e));
+                .insert("ripestat_mcp".to_string(), format!("error: {e}"));
             tracing::warn!("RIPEstat MCP check failed: {}", e);
         }
         Err(_) => {
@@ -66,7 +66,7 @@ pub async fn run(_config: &AppConfig) -> Result<HealthStatus> {
             health_status.status = "unhealthy".to_string();
             health_status
                 .services
-                .insert("whois_mcp".to_string(), format!("error: {}", e));
+                .insert("whois_mcp".to_string(), format!("error: {e}"));
             tracing::warn!("WHOIS MCP check failed: {}", e);
         }
         Err(_) => {
@@ -105,7 +105,6 @@ async fn check_whois_connection() -> Result<()> {
 
 fn check_llm_client() -> String {
     // Check if we can create a client instance (doesn't make API calls)
-    match anthropic::Client::from_env() {
-        _ => "healthy".to_string(),
-    }
+    anthropic::Client::from_env();
+    "healthy".to_string()
 }

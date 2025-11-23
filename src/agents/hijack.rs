@@ -1,25 +1,13 @@
-use crate::config::PrefixesConfig;
 use crate::http::server::BGPAlerterAlert;
 use crate::mcp_clients;
 use color_eyre::Result;
 use rig::completion::Prompt;
 use rig::prelude::CompletionClient;
 use rig::providers::anthropic;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
-pub struct HijackAgent {
-    config: Arc<RwLock<PrefixesConfig>>,
-}
+pub struct HijackAgent;
 
 impl HijackAgent {
-    /// Create a new hijack agent with an existing config
-    pub fn with_config(config: PrefixesConfig) -> Self {
-        Self {
-            config: Arc::new(RwLock::new(config)),
-        }
-    }
-
     pub async fn run(alert: BGPAlerterAlert, config: &crate::config::AppConfig) -> Result<String> {
         dotenv::dotenv().ok();
 
@@ -50,7 +38,7 @@ impl HijackAgent {
                 r#"Analyze the following BGP alert and prepare a comprehensive incident report for the NOC operator:
 
 BGP Alert:
-{}
+{alert_json}
 
 Instructions:
 1. Identify the key details from the alert: affected prefix, new prefix (if any), origin ASN changes, and peer information
@@ -65,8 +53,7 @@ Instructions:
    - Recommended actions for the NOC operator
    - Any relevant historical context or patterns
 
-Format your response as a structured incident report that is easy to scan and act upon."#,
-                alert_json
+Format your response as a structured incident report that is easy to scan and act upon."#
             ))
             .multi_turn(5)
             .await?;

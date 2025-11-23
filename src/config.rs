@@ -8,24 +8,29 @@ pub const RIPESTAT_MCP_ENDPONT: &str = "https://mcp-ripestat.taihen.org/mcp";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PrefixInfo {
+    #[allow(dead_code)]
     pub description: String,
+    #[allow(dead_code)]
     pub asn: Vec<u32>,
     #[serde(default)]
     #[serde(rename = "ignoreMorespecifics")]
     pub ignore_morespecifics: bool,
     #[serde(default)]
     pub ignore: bool,
+    #[allow(dead_code)]
     pub group: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AsnInfo {
+    #[allow(dead_code)]
     pub group: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Options {
     #[serde(rename = "monitorASns")]
+    #[allow(dead_code)]
     pub monitor_asns: HashMap<String, AsnInfo>,
 }
 
@@ -56,18 +61,15 @@ impl PrefixesConfig {
                     if key_str == "options" {
                         // Parse the options section
                         if let serde_yaml::Value::Mapping(options_map) = val {
-                            if let Some(monitor_asns_val) = options_map
-                                .get(&serde_yaml::Value::String("monitorASns".to_string()))
+                            if let Some(serde_yaml::Value::Mapping(asns_map)) = options_map
+                                .get(serde_yaml::Value::String("monitorASns".to_string()))
                             {
-                                if let serde_yaml::Value::Mapping(asns_map) = monitor_asns_val {
-                                    for (asn_key, asn_val) in asns_map {
-                                        if let Some(asn_str) = asn_key.as_str() {
-                                            if let Ok(asn_info) =
-                                                serde_yaml::from_value::<AsnInfo>(asn_val.clone())
-                                            {
-                                                monitored_asns
-                                                    .insert(asn_str.to_string(), asn_info);
-                                            }
+                                for (asn_key, asn_val) in asns_map {
+                                    if let Some(asn_str) = asn_key.as_str() {
+                                        if let Ok(asn_info) =
+                                            serde_yaml::from_value::<AsnInfo>(asn_val.clone())
+                                        {
+                                            monitored_asns.insert(asn_str.to_string(), asn_info);
                                         }
                                     }
                                 }
@@ -90,6 +92,7 @@ impl PrefixesConfig {
     }
 
     /// Check if a prefix is monitored
+    #[allow(dead_code)] // Used in tests
     pub fn is_prefix_monitored(&self, prefix: &str) -> bool {
         self.prefixes.contains_key(prefix)
     }
@@ -99,11 +102,12 @@ impl PrefixesConfig {
         self.monitored_asns.contains_key(asn)
     }
 
-    /// Check if a prefix matches or is contained within any monitored prefix
-    pub fn is_prefix_relevant(&self, alert_prefix: &str) -> bool {
+    /// Find the matching prefix info for a given alert prefix
+    /// Returns the prefix info if the alert prefix matches or is contained within a monitored prefix
+    fn find_matching_prefix_info(&self, alert_prefix: &str) -> Option<&PrefixInfo> {
         // First check exact match
-        if self.is_prefix_monitored(alert_prefix) {
-            return true;
+        if let Some(prefix_info) = self.prefixes.get(alert_prefix) {
+            return Some(prefix_info);
         }
 
         // Parse the alert prefix to check containment
@@ -124,17 +128,22 @@ impl PrefixesConfig {
                         {
                             continue;
                         }
-                        return true;
+                        return Some(prefix_info);
                     }
                     // Also check if monitored prefix is contained in alert prefix
                     if alert_net.contains(&monitored_net) {
-                        return true;
+                        return Some(prefix_info);
                     }
                 }
             }
         }
 
-        false
+        None
+    }
+
+    /// Check if a prefix matches or is contained within any monitored prefix
+    pub fn is_prefix_relevant(&self, alert_prefix: &str) -> bool {
+        self.find_matching_prefix_info(alert_prefix).is_some()
     }
 
     /// Check if an alert is relevant to our monitored resources
@@ -151,7 +160,7 @@ impl PrefixesConfig {
             }
         }
 
-        // Check ASN
+        // Check ASN in monitored ASNs list
         if self.is_asn_monitored(&alert.details.asn) {
             return true;
         }

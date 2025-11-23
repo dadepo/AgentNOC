@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
     // Load configuration
     let config = config::AppConfig::from_env()?;
     let server_port = config.server_port;
-    let server_url = format!("http://127.0.0.1:{}", server_port);
+    let server_url = format!("http://127.0.0.1:{server_port}");
 
     // Create broadcast channel for message streaming
     let (tx, _) = broadcast::channel::<String>(100);
@@ -43,13 +43,10 @@ async fn main() -> Result<()> {
     // Open browser
     if let Err(e) = open::that(&server_url) {
         tracing::warn!("Failed to open browser: {}", e);
-        eprintln!(
-            "Failed to open browser: {}. Please open {} manually.",
-            e, server_url
-        );
+        eprintln!("Failed to open browser: {e}. Please open {server_url} manually.");
     } else {
         tracing::info!("Opened browser at {}", server_url);
-        println!("Opened browser at {}", server_url);
+        println!("Opened browser at {server_url}");
     }
 
     // Keep server running

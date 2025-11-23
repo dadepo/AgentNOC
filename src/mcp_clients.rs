@@ -6,6 +6,8 @@ use rmcp::transport::streamable_http_client::{
 };
 use rmcp::{Peer, RoleClient, ServiceExt};
 
+use crate::config::RIPESTAT_MCP_ENDPONT;
+
 /// Container for MCP client tools and peer information
 pub struct MCPConnection {
     pub tools: Vec<Tool>,
@@ -28,7 +30,7 @@ pub async fn connect_ripestat() -> Result<MCPConnection> {
     let transport = StreamableHttpClientTransport::with_client(
         http_client,
         StreamableHttpClientTransportConfig {
-            uri: "https://mcp-ripestat.taihen.org/mcp".into(),
+            uri: RIPESTAT_MCP_ENDPONT.into(),
             ..Default::default()
         },
     );
@@ -69,7 +71,7 @@ pub async fn connect_whois() -> Result<MCPConnection> {
 
     // Spawn the whois MCP server via uvx
     let mut command = tokio::process::Command::new("uvx");
-    command.args(&[
+    command.args([
         "--from",
         "git+https://github.com/dadepo/whois-mcp.git",
         "whois-mcp",
