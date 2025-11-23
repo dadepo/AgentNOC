@@ -5,9 +5,9 @@ use rig::completion::Prompt;
 use rig::prelude::CompletionClient;
 use rig::providers::anthropic;
 
-pub struct AlertAnalysisAgent;
+pub struct AlertAnalyzer;
 
-impl AlertAnalysisAgent {
+impl AlertAnalyzer {
     pub async fn run(alert: BGPAlerterAlert, config: &crate::config::AppConfig) -> Result<String> {
         dotenv::dotenv().ok();
 

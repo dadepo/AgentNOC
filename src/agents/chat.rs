@@ -6,9 +6,9 @@ use rig::completion::Prompt;
 use rig::prelude::CompletionClient;
 use rig::providers::anthropic;
 
-pub struct ChatAgent;
+pub struct Chat;
 
-impl ChatAgent {
+impl Chat {
     pub async fn run(
         alert: BGPAlerterAlert,
         initial_response: &str,

@@ -1,4 +1,4 @@
-use crate::agents::{health, hijack};
+use crate::agents::{alert_analyzer, health};
 use crate::database::{db, models};
 use axum::{
     Json, Router,
@@ -177,7 +177,7 @@ async fn process_alert(
         })));
     }
 
-    match hijack::AlertAnalysisAgent::run(payload.clone(), &state.config).await {
+    match alert_analyzer::AlertAnalyzer::run(payload.clone(), &state.config).await {
         Ok(result) => {
             // Save alert and initial response to database
             let alert_data_json = serde_json::to_string(&payload).map_err(|e| {
@@ -431,7 +431,7 @@ async fn chat_with_alert(
     })?;
 
     // Run chat agent
-    let assistant_response = match crate::agents::chat::ChatAgent::run(
+    let assistant_response = match crate::agents::chat::Chat::run(
         alert,
         &initial_response,
         &chat_history,
