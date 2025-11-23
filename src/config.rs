@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+pub const RIPESTAT_MCP_ENDPONT: &str = "https://mcp-ripestat.taihen.org/mcp";
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PrefixInfo {
     pub description: String,
@@ -102,18 +104,12 @@ impl PrefixesConfig {
 pub struct AppConfig {
     #[serde(default = "default_server_port")]
     pub server_port: u16,
-    #[serde(default = "default_mcp_server_url")]
-    pub mcp_server_url: String,
     #[serde(default = "default_llm_model_name")]
     pub llm_model_name: String,
 }
 
 fn default_server_port() -> u16 {
     7654
-}
-
-fn default_mcp_server_url() -> String {
-    "http://127.0.0.1:8080/mcp".to_string()
 }
 
 fn default_llm_model_name() -> String {
@@ -129,15 +125,11 @@ impl AppConfig {
             .and_then(|p| p.parse().ok())
             .unwrap_or_else(default_server_port);
 
-        let mcp_server_url =
-            std::env::var("MCP_SERVER_URL").unwrap_or_else(|_| default_mcp_server_url());
-
         let llm_model_name =
             std::env::var("LLM_MODEL_NAME").unwrap_or_else(|_| default_llm_model_name());
 
         Ok(Self {
             server_port,
-            mcp_server_url,
             llm_model_name,
         })
     }

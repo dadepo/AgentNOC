@@ -63,15 +63,20 @@ async fn message_stream(
     )
 }
 
-async fn health_check(State(state): State<AppState>) -> Result<Json<String>, StatusCode> {
-    match health::run("8.8.8.8".to_string(), &state.config).await {
-        Ok(result) => {
-            // Broadcast result to web clients
-            let _ = state.tx.send(format!("Agent result: {}", result));
-            Ok(Json(result))
+async fn health_check(
+    State(state): State<AppState>,
+) -> Result<Json<health::HealthStatus>, StatusCode> {
+    match health::run(&state.config).await {
+        Ok(status) => {
+            // Broadcast health status to web clients
+            let status_json =
+                serde_json::to_string(&status).unwrap_or_else(|_| "unknown".to_string());
+            let _ = state.tx.send(format!("Health check: {}", status_json));
+            Ok(Json(status))
         }
         Err(e) => {
-            let _ = state.tx.send(format!("Agent error: {}", e));
+            let _ = state.tx.send(format!("Health check error: {}", e));
+            tracing::error!("Health check failed: {}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
