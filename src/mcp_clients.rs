@@ -9,9 +9,12 @@ use rmcp::{Peer, RoleClient, ServiceExt};
 use crate::config::RIPESTAT_MCP_ENDPONT;
 
 /// Container for MCP client tools and peer information
+/// IMPORTANT: The Box<dyn ...> must be kept alive for the peer to work
 pub struct MCPConnection {
     pub tools: Vec<Tool>,
     pub peer: Peer<RoleClient>,
+    #[allow(dead_code)] // This field must exist to keep the service alive
+    _service: Box<dyn std::any::Any + Send>,
 }
 
 /// Connect to the RIPEstat MCP server and return tools and peer
@@ -54,6 +57,7 @@ pub async fn connect_ripestat() -> Result<MCPConnection> {
     Ok(MCPConnection {
         tools: tools_result.tools,
         peer,
+        _service: Box::new(client), // Keep the service alive!
     })
 }
 
@@ -98,5 +102,6 @@ pub async fn connect_whois() -> Result<MCPConnection> {
     Ok(MCPConnection {
         tools: tools_result.tools,
         peer,
+        _service: Box::new(client), // Keep the service alive!
     })
 }
