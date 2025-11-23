@@ -2,11 +2,11 @@ function Dashboard({ alertCount }) {
   return (
     <div className="dashboard">
       <div className="dashboard-content">
-        <h2>NOC Agent Dashboard</h2>
+        <h2>AgentNOC Dashboard</h2>
         <div className="dashboard-section">
           <h3>System Overview</h3>
           <p>
-            The NOC Agent monitors BGP alerts and provides automated analysis
+            The AgentNOC monitors BGP alerts and provides automated analysis
             of potential security incidents and routing anomalies.
           </p>
           <div className="dashboard-stats">

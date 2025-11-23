@@ -346,7 +346,7 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1>NOC Agent</h1>
+        <h1>AgentNOC</h1>
         <div className={`status ${connected ? 'connected' : 'disconnected'}`}>
           {connected ? '● Connected' : '○ Disconnected'}
         </div>

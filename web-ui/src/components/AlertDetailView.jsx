@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import ReactMarkdown from 'react-markdown'
+import IncidentReportCard from './IncidentReportCard'
 import ChatHistory from './ChatHistory'
 import ChatInput from './ChatInput'
 
@@ -43,25 +43,14 @@ function AlertDetailView({ alertData, loading, onDelete, onSendMessage, sendingM
       </div>
 
       <div className="alert-detail-content">
-        <div className="initial-report-section">
-          <div
-            className="section-header"
-            onClick={() => setReportExpanded(!reportExpanded)}
-          >
-            <h3>Initial Analysis Report</h3>
-            <span className="expand-icon">
-              {reportExpanded ? '▼' : '▶'}
-            </span>
-          </div>
-          {reportExpanded && (
-            <div className="report-content">
-              <ReactMarkdown>{alertData.initial_response}</ReactMarkdown>
-            </div>
-          )}
-        </div>
+        {reportExpanded && (
+          <IncidentReportCard 
+            rawResponse={alertData.initial_response}
+          />
+        )}
 
         <div className="chat-section">
-          <h3>Chat with Agent</h3>
+          <h3>💬 Chat with Agent</h3>
           <ChatHistory messages={alertData.chat_messages || []} />
           <ChatInput
             onSend={onSendMessage}
