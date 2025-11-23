@@ -15,20 +15,29 @@ use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::BroadcastStream;
 use tower_http::services::ServeDir;
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, PrefixesConfig};
 
 #[derive(Clone)]
 pub struct AppState {
     pub tx: broadcast::Sender<String>,
     pub config: AppConfig,
+    pub prefixes_config: PrefixesConfig,
 }
 
 pub async fn start(tx: broadcast::Sender<String>, config: AppConfig) -> Result<()> {
+    // Load prefixes configuration
+    let prefixes_config = PrefixesConfig::load("prefixes.yml")
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to load prefixes.yml: {}", e))?;
+
     // Serve static files from web-ui/dist directory
     let serve_dir = ServeDir::new("web-ui/dist");
 
     let port = config.server_port;
-    let state = AppState { tx, config };
+    let state = AppState {
+        tx,
+        config,
+        prefixes_config,
+    };
 
     // build our application with routes
     // API routes must come before static file serving
@@ -84,25 +93,25 @@ async fn health_check(
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct BGPAlerterAlert {
-    message: String,
-    description: String,
-    details: Details,
+    pub message: String,
+    pub description: String,
+    pub details: Details,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Details {
-    prefix: String,
+    pub prefix: String,
     #[serde(default)]
-    newprefix: Option<String>,
+    pub newprefix: Option<String>,
     #[serde(default)]
-    neworigin: Option<String>,
-    summary: String,
-    earliest: String,
-    latest: String,
-    kind: String,
-    asn: String,
-    paths: String,
-    peers: String,
+    pub neworigin: Option<String>,
+    pub summary: String,
+    pub earliest: String,
+    pub latest: String,
+    pub kind: String,
+    pub asn: String,
+    pub paths: String,
+    pub peers: String,
 }
 
 async fn create_alert(
@@ -110,6 +119,22 @@ async fn create_alert(
     Json(payload): Json<BGPAlerterAlert>,
 ) -> Result<Json<String>, StatusCode> {
     tracing::debug!("Received alert: {:#?}", payload);
+
+    // Check if alert is relevant to our monitored resources
+    if !state.prefixes_config.is_alert_relevant(&payload) {
+        tracing::debug!(
+            "Alert for prefix {} (ASN: {}) is not relevant to monitored resources, skipping",
+            payload.details.prefix,
+            payload.details.asn
+        );
+        let _ = state.tx.send(format!(
+            "Alert ignored: prefix {} not in monitored resources",
+            payload.details.prefix
+        ));
+        return Ok(Json(
+            "Alert ignored: not relevant to monitored resources".to_string(),
+        ));
+    }
 
     match hijack::HijackAgent::run(payload, &state.config).await {
         Ok(result) => {

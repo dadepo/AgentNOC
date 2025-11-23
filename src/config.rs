@@ -98,6 +98,73 @@ impl PrefixesConfig {
     pub fn is_asn_monitored(&self, asn: &str) -> bool {
         self.monitored_asns.contains_key(asn)
     }
+
+    /// Check if a prefix matches or is contained within any monitored prefix
+    pub fn is_prefix_relevant(&self, alert_prefix: &str) -> bool {
+        // First check exact match
+        if self.is_prefix_monitored(alert_prefix) {
+            return true;
+        }
+
+        // Parse the alert prefix to check containment
+        if let Ok(alert_net) = alert_prefix.parse::<ipnet::IpNet>() {
+            // Check if alert prefix is contained in any monitored prefix
+            for (monitored_prefix, prefix_info) in &self.prefixes {
+                // Skip ignored prefixes
+                if prefix_info.ignore {
+                    continue;
+                }
+
+                if let Ok(monitored_net) = monitored_prefix.parse::<ipnet::IpNet>() {
+                    // Check if alert prefix is contained in monitored prefix
+                    if monitored_net.contains(&alert_net) {
+                        // If ignoreMorespecifics is true, skip more specific prefixes
+                        if prefix_info.ignore_morespecifics
+                            && alert_net.prefix_len() > monitored_net.prefix_len()
+                        {
+                            continue;
+                        }
+                        return true;
+                    }
+                    // Also check if monitored prefix is contained in alert prefix
+                    if alert_net.contains(&monitored_net) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if an alert is relevant to our monitored resources
+    pub fn is_alert_relevant(&self, alert: &crate::alerts::http::server::BGPAlerterAlert) -> bool {
+        // Check main prefix
+        if self.is_prefix_relevant(&alert.details.prefix) {
+            return true;
+        }
+
+        // Check new prefix if present
+        if let Some(ref newprefix) = alert.details.newprefix {
+            if self.is_prefix_relevant(newprefix) {
+                return true;
+            }
+        }
+
+        // Check ASN
+        if self.is_asn_monitored(&alert.details.asn) {
+            return true;
+        }
+
+        // Check new origin ASN if present
+        if let Some(ref neworigin) = alert.details.neworigin {
+            if self.is_asn_monitored(neworigin) {
+                return true;
+            }
+        }
+
+        false
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
