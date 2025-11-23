@@ -1,6 +1,7 @@
 mod agents;
 mod alerts;
 mod config;
+mod database;
 mod mcp_clients;
 
 use alerts::http;

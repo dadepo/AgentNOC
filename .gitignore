@@ -7,6 +7,11 @@
 # Logs
 logs/
 
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
 # BGPalerter related files
 bgpalerter/
 prefixes.yml
