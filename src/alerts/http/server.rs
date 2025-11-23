@@ -44,7 +44,7 @@ pub async fn start(tx: broadcast::Sender<String>, config: AppConfig) -> Result<(
     let app = Router::new()
         .route("/api/messages/stream", get(message_stream))
         .route("/api/health", get(health_check))
-        .route("/api/alerts", post(create_alert))
+        .route("/api/alerts", post(process_alert))
         // Serve static files as fallback (must be last)
         .fallback_service(serve_dir)
         .with_state(state);
@@ -114,7 +114,7 @@ pub struct Details {
     pub peers: String,
 }
 
-async fn create_alert(
+async fn process_alert(
     State(state): State<AppState>,
     Json(payload): Json<BGPAlerterAlert>,
 ) -> Result<Json<String>, StatusCode> {
@@ -136,14 +136,16 @@ async fn create_alert(
         ));
     }
 
-    match hijack::HijackAgent::run(payload, &state.config).await {
+    match hijack::AlertAnalysisAgent::run(payload, &state.config).await {
         Ok(result) => {
             // Broadcast result to web clients
-            let _ = state.tx.send(format!("Hijack Agent result: {result}"));
+            let _ = state
+                .tx
+                .send(format!("Alert Analysis Agent result: {result}"));
             Ok(Json(result))
         }
         Err(e) => {
-            let _ = state.tx.send(format!("Hijack Agent error: {e}"));
+            let _ = state.tx.send(format!("Alert Analysis Agent error: {e}"));
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
