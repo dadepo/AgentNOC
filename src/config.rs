@@ -569,23 +569,27 @@ options:
 
     #[test]
     fn test_load_from_file() {
-        // Test loading the actual prefixes.yml file from the root
-        let config = PrefixesConfig::load("prefixes.yml").unwrap();
+        // Test loading from the test prefixes file
+        let config = PrefixesConfig::load("prefixes.test.yml").unwrap();
 
         // Verify prefixes are loaded
-        assert!(config.is_prefix_monitored("176.205.0.0/20"));
-        assert!(config.is_prefix_monitored("193.0.0.0/21"));
+        assert!(config.is_prefix_monitored("10.0.0.0/8"));
+        assert!(config.is_prefix_monitored("172.16.0.0/12"));
+        assert!(config.is_prefix_monitored("192.168.1.0/24"));
 
         // Verify ASNs are loaded
-        assert!(config.is_asn_monitored("3333"));
-        assert!(config.is_asn_monitored("5384"));
+        assert!(config.is_asn_monitored("65000"));
+        assert!(config.is_asn_monitored("65001"));
+        assert!(config.is_asn_monitored("65002"));
+        assert!(config.is_asn_monitored("65003"));
 
         // Verify expected ASNs in prefixes
-        let prefix1 = config.prefixes.get("176.205.0.0/20").unwrap();
-        assert!(prefix1.asn.contains(&5384));
+        let prefix1 = config.prefixes.get("10.0.0.0/8").unwrap();
+        assert!(prefix1.asn.contains(&65000));
+        assert!(prefix1.asn.contains(&65001));
 
-        let prefix2 = config.prefixes.get("193.0.0.0/21").unwrap();
-        assert!(prefix2.asn.contains(&3333));
+        let prefix2 = config.prefixes.get("172.16.0.0/12").unwrap();
+        assert!(prefix2.asn.contains(&65002));
     }
 
     #[test]
