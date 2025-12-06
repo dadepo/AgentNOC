@@ -25,13 +25,6 @@ pub struct AsnInfo {
     pub group: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct Options {
-    #[serde(rename = "monitorASns")]
-    #[allow(dead_code)]
-    pub monitor_asns: HashMap<String, AsnInfo>,
-}
-
 #[derive(Debug, Clone)]
 pub struct PrefixesConfig {
     pub prefixes: HashMap<String, PrefixInfo>,
@@ -58,18 +51,16 @@ impl PrefixesConfig {
                 if let Some(key_str) = key.as_str() {
                     if key_str == "options" {
                         // Parse the options section
-                        if let serde_yaml::Value::Mapping(options_map) = val {
-                            if let Some(serde_yaml::Value::Mapping(asns_map)) = options_map
+                        if let serde_yaml::Value::Mapping(options_map) = val
+                            && let Some(serde_yaml::Value::Mapping(asns_map)) = options_map
                                 .get(serde_yaml::Value::String("monitorASns".to_string()))
-                            {
-                                for (asn_key, asn_val) in asns_map {
-                                    if let Some(asn_str) = asn_key.as_str() {
-                                        if let Ok(asn_info) =
-                                            serde_yaml::from_value::<AsnInfo>(asn_val.clone())
-                                        {
-                                            monitored_asns.insert(asn_str.to_string(), asn_info);
-                                        }
-                                    }
+                        {
+                            for (asn_key, asn_val) in asns_map {
+                                if let Some(asn_str) = asn_key.as_str()
+                                    && let Ok(asn_info) =
+                                        serde_yaml::from_value::<AsnInfo>(asn_val.clone())
+                                {
+                                    monitored_asns.insert(asn_str.to_string(), asn_info);
                                 }
                             }
                         }
@@ -152,10 +143,10 @@ impl PrefixesConfig {
         }
 
         // Check new prefix if present
-        if let Some(ref newprefix) = alert.details.newprefix {
-            if self.is_prefix_relevant(newprefix) {
-                return true;
-            }
+        if let Some(ref newprefix) = alert.details.newprefix
+            && self.is_prefix_relevant(newprefix)
+        {
+            return true;
         }
 
         // Check ASN in monitored ASNs list
@@ -164,10 +155,10 @@ impl PrefixesConfig {
         }
 
         // Check new origin ASN if present
-        if let Some(ref neworigin) = alert.details.neworigin {
-            if self.is_asn_monitored(neworigin) {
-                return true;
-            }
+        if let Some(ref neworigin) = alert.details.neworigin
+            && self.is_asn_monitored(neworigin)
+        {
+            return true;
         }
 
         false
@@ -578,23 +569,27 @@ options:
 
     #[test]
     fn test_load_from_file() {
-        // Test loading the actual prefixes.yml file from the root
-        let config = PrefixesConfig::load("prefixes.yml").unwrap();
+        // Test loading from the test prefixes file
+        let config = PrefixesConfig::load("prefixes.test.yml").unwrap();
 
         // Verify prefixes are loaded
-        assert!(config.is_prefix_monitored("176.205.0.0/20"));
-        assert!(config.is_prefix_monitored("193.0.0.0/21"));
+        assert!(config.is_prefix_monitored("10.0.0.0/8"));
+        assert!(config.is_prefix_monitored("172.16.0.0/12"));
+        assert!(config.is_prefix_monitored("192.168.1.0/24"));
 
         // Verify ASNs are loaded
-        assert!(config.is_asn_monitored("3333"));
-        assert!(config.is_asn_monitored("5384"));
+        assert!(config.is_asn_monitored("65000"));
+        assert!(config.is_asn_monitored("65001"));
+        assert!(config.is_asn_monitored("65002"));
+        assert!(config.is_asn_monitored("65003"));
 
         // Verify expected ASNs in prefixes
-        let prefix1 = config.prefixes.get("176.205.0.0/20").unwrap();
-        assert!(prefix1.asn.contains(&5384));
+        let prefix1 = config.prefixes.get("10.0.0.0/8").unwrap();
+        assert!(prefix1.asn.contains(&65000));
+        assert!(prefix1.asn.contains(&65001));
 
-        let prefix2 = config.prefixes.get("193.0.0.0/21").unwrap();
-        assert!(prefix2.asn.contains(&3333));
+        let prefix2 = config.prefixes.get("172.16.0.0/12").unwrap();
+        assert!(prefix2.asn.contains(&65002));
     }
 
     #[test]
