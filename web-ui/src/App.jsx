@@ -4,6 +4,7 @@ import AlertsSidebar from './components/AlertsSidebar'
 import Dashboard from './components/Dashboard'
 import AlertDetailView from './components/AlertDetailView'
 import DeleteConfirmDialog from './components/DeleteConfirmDialog'
+import SettingsPage from './components/SettingsPage'
 
 function App() {
   const [alerts, setAlerts] = useState([])
@@ -18,6 +19,10 @@ function App() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [alertToDelete, setAlertToDelete] = useState(null)
   const [error, setError] = useState(null)
+  
+  // Settings state
+  const [showSettings, setShowSettings] = useState(false)
+  const [mcpServers, setMcpServers] = useState([])
 
   const reconnectTimeoutRef = useRef(null)
   const eventSourceRef = useRef(null)
@@ -229,6 +234,107 @@ function App() {
     }
   }
 
+  // =====================
+  // MCP Server API Functions
+  // =====================
+  
+  const fetchMcpServers = async () => {
+    try {
+      const response = await fetch('/api/mcp-servers')
+      if (!response.ok) {
+        throw new Error('Failed to fetch MCP servers')
+      }
+      const data = await response.json()
+      setMcpServers(data)
+    } catch (err) {
+      console.error('Error fetching MCP servers:', err)
+      setError('Failed to load MCP servers.')
+    }
+  }
+
+  const createMcpServer = async (serverData) => {
+    try {
+      const response = await fetch('/api/mcp-servers', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(serverData),
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.text()
+        throw new Error(errorData || 'Failed to create server')
+      }
+      
+      const newServer = await response.json()
+      setMcpServers((prev) => [...prev, newServer])
+      return newServer
+    } catch (err) {
+      console.error('Error creating MCP server:', err)
+      setError(`Failed to create server: ${err.message}`)
+      throw err
+    }
+  }
+
+  const updateMcpServer = async (id, serverData) => {
+    try {
+      const response = await fetch(`/api/mcp-servers/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(serverData),
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.text()
+        throw new Error(errorData || 'Failed to update server')
+      }
+      
+      const updatedServer = await response.json()
+      setMcpServers((prev) =>
+        prev.map((s) => (s.id === id ? updatedServer : s))
+      )
+      return updatedServer
+    } catch (err) {
+      console.error('Error updating MCP server:', err)
+      setError(`Failed to update server: ${err.message}`)
+      throw err
+    }
+  }
+
+  const deleteMcpServer = async (id) => {
+    try {
+      const response = await fetch(`/api/mcp-servers/${id}`, {
+        method: 'DELETE',
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete server')
+      }
+      
+      setMcpServers((prev) => prev.filter((s) => s.id !== id))
+    } catch (err) {
+      console.error('Error deleting MCP server:', err)
+      setError('Failed to delete server.')
+      throw err
+    }
+  }
+
+  const testMcpServer = async (id) => {
+    const response = await fetch(`/api/mcp-servers/${id}/test`, {
+      method: 'POST',
+    })
+    
+    if (!response.ok) {
+      const errorData = await response.text()
+      throw new Error(errorData || 'Connection test failed')
+    }
+    
+    return await response.json()
+  }
+
   // SSE connection
   const connectSSE = () => {
     if (eventSourceRef.current) {
@@ -343,12 +449,48 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAlertId])
 
+  // Render settings page if showSettings is true
+  if (showSettings) {
+    return (
+      <SettingsPage
+        onBack={() => setShowSettings(false)}
+        servers={mcpServers}
+        onRefresh={fetchMcpServers}
+        onCreateServer={createMcpServer}
+        onUpdateServer={updateMcpServer}
+        onDeleteServer={deleteMcpServer}
+        onTestServer={testMcpServer}
+      />
+    )
+  }
+
   return (
     <div className="app">
       <header className="header">
         <h1>AgentNOC</h1>
-        <div className={`status ${connected ? 'connected' : 'disconnected'}`}>
-          {connected ? '● Connected' : '○ Disconnected'}
+        <div className="header-right">
+          <button
+            className="settings-btn"
+            onClick={() => setShowSettings(true)}
+            title="Settings"
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+          <div className={`status ${connected ? 'connected' : 'disconnected'}`}>
+            {connected ? '● Connected' : '○ Disconnected'}
+          </div>
         </div>
       </header>
 
@@ -378,8 +520,8 @@ function App() {
           ) : (
             <Dashboard alertCount={alerts.length} />
           )}
-                </div>
-              </div>
+        </div>
+      </div>
 
       <DeleteConfirmDialog
         isOpen={showDeleteDialog}
