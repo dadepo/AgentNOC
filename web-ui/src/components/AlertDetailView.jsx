@@ -2,9 +2,11 @@ import { useState } from 'react'
 import IncidentReportCard from './IncidentReportCard'
 import ChatHistory from './ChatHistory'
 import ChatInput from './ChatInput'
+import AlertDataCard from './AlertDataCard'
 
 function AlertDetailView({ alertData, loading, onDelete, onSendMessage, sendingMessage }) {
   const [reportExpanded, setReportExpanded] = useState(true)
+  const [alertExpanded, setAlertExpanded] = useState(false)
 
   if (loading) {
     return (
@@ -43,6 +45,12 @@ function AlertDetailView({ alertData, loading, onDelete, onSendMessage, sendingM
       </div>
 
       <div className="alert-detail-content">
+        <AlertDataCard 
+          alert={alertData.alert} 
+          expanded={alertExpanded}
+          onToggle={() => setAlertExpanded(!alertExpanded)}
+        />
+
         {reportExpanded && (
           <IncidentReportCard 
             rawResponse={alertData.initial_response}
