@@ -1,12 +1,14 @@
 use crate::agents::{alert_analyzer, health};
 use crate::database::{db, models};
 use crate::mcp_clients;
+use axum::body::Body;
 use axum::{
     Json, Router,
     extract::State,
     extract::{Path, Query},
-    http::StatusCode,
+    http::{StatusCode, Uri},
     response::sse::{Event, Sse},
+    response::{IntoResponse, Response},
     routing::{get, post},
 };
 use color_eyre::Result;
@@ -18,7 +20,6 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::BroadcastStream;
-use tower_http::services::ServeDir;
 
 use crate::config::{AppConfig, PrefixesConfig};
 
@@ -53,9 +54,6 @@ pub async fn start(tx: broadcast::Sender<String>, config: AppConfig) -> Result<(
     let prefixes_config = PrefixesConfig::load("prefixes.yml")
         .map_err(|e| color_eyre::eyre::eyre!("Failed to load prefixes.yml: {}", e))?;
 
-    // Serve static files from web-ui/dist directory
-    let serve_dir = ServeDir::new("web-ui/dist");
-
     let port = config.server_port;
     let state = AppState {
         tx,
@@ -83,7 +81,8 @@ pub async fn start(tx: broadcast::Sender<String>, config: AppConfig) -> Result<(
         .route("/api/mcps/{id}/test", post(test_mcp_server))
         .route("/api/mcps/enable-native", post(enable_native_mcp_servers))
         // Serve static files as fallback (must be last)
-        .fallback_service(serve_dir)
+        // For SPA routing, serve index.html for all non-API routes
+        .fallback(serve_spa)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
@@ -91,6 +90,63 @@ pub async fn start(tx: broadcast::Sender<String>, config: AppConfig) -> Result<(
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// SPA fallback handler: serves index.html for all non-API routes
+async fn serve_spa(uri: Uri) -> Response {
+    use axum::http::HeaderMap;
+    use axum::http::header::HeaderValue;
+    use std::path::PathBuf;
+
+    // Try to serve the requested file first
+    let file_path = uri.path().trim_start_matches('/');
+    let dist_path = PathBuf::from("web-ui/dist").join(file_path);
+
+    // If the file exists and is not a directory, serve it
+    if dist_path.exists() && dist_path.is_file() && !file_path.is_empty() {
+        if let Ok(contents) = tokio::fs::read(&dist_path).await {
+            let mut headers = HeaderMap::new();
+            // Set appropriate content type based on file extension
+            if file_path.ends_with(".html") {
+                headers.insert("content-type", HeaderValue::from_static("text/html"));
+            } else if file_path.ends_with(".js") {
+                headers.insert(
+                    "content-type",
+                    HeaderValue::from_static("application/javascript"),
+                );
+            } else if file_path.ends_with(".css") {
+                headers.insert("content-type", HeaderValue::from_static("text/css"));
+            }
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(
+                    "content-type",
+                    headers
+                        .get("content-type")
+                        .unwrap_or(&HeaderValue::from_static("application/octet-stream")),
+                )
+                .body(Body::from(contents))
+                .unwrap()
+                .into_response();
+        }
+    }
+
+    // For SPA routing, serve index.html for all non-API routes
+    let index_path = PathBuf::from("web-ui/dist/index.html");
+    if let Ok(contents) = tokio::fs::read(&index_path).await {
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", HeaderValue::from_static("text/html"))
+            .body(Body::from(contents))
+            .unwrap()
+            .into_response()
+    } else {
+        Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::from("index.html not found"))
+            .unwrap()
+            .into_response()
+    }
 }
 
 async fn message_stream(

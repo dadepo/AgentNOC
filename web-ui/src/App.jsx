@@ -1,9 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
+import { Routes, Route } from 'react-router-dom'
 import './index.css'
-import AlertsSidebar from './components/AlertsSidebar'
-import Dashboard from './components/Dashboard'
-import AlertDetailView from './components/AlertDetailView'
-import DeleteConfirmDialog from './components/DeleteConfirmDialog'
+import MainView from './components/MainView'
 import SettingsPage from './components/SettingsPage'
 
 function App() {
@@ -20,8 +18,7 @@ function App() {
   const [alertToDelete, setAlertToDelete] = useState(null)
   const [error, setError] = useState(null)
   
-  // Settings state
-  const [showSettings, setShowSettings] = useState(false)
+  // MCP Servers state
   const [mcpServers, setMcpServers] = useState([])
 
   const reconnectTimeoutRef = useRef(null)
@@ -445,6 +442,7 @@ function App() {
   // Initial fetch on mount
   useEffect(() => {
     fetchAlerts()
+    fetchMcpServers()
   }, [])
 
   // Connect to SSE on mount
@@ -473,93 +471,56 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAlertId])
 
-  // Render settings page if showSettings is true
-  if (showSettings) {
-    return (
-      <SettingsPage
-        onBack={() => setShowSettings(false)}
-        servers={mcpServers}
-        onRefresh={fetchMcpServers}
-        onCreateServer={createMcpServer}
-        onUpdateServer={updateMcpServer}
-        onDeleteServer={deleteMcpServer}
-        onTestServer={testMcpServer}
-        onEnableNative={enableNativeMcpServers}
-      />
-    )
-  }
-
   return (
-    <div className="app">
-      <header className="header">
-        <h1>AgentNOC</h1>
-        <div className="header-right">
-          <button
-            className="settings-btn"
-            onClick={() => setShowSettings(true)}
-            title="Settings"
-          >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-          </button>
-          <div className={`status ${connected ? 'connected' : 'disconnected'}`}>
-            {connected ? '● Connected' : '○ Disconnected'}
-          </div>
-        </div>
-      </header>
-
-      {error && (
-        <div className="error-banner">
-          <span>{error}</span>
-          <button onClick={() => setError(null)}>×</button>
-        </div>
-      )}
-
-      <div className="main-container">
-        <AlertsSidebar
-          alerts={alerts}
-          selectedAlertId={selectedAlertId}
-          onSelectAlert={handleSelectAlert}
-        />
-
-        <div className="main-content">
-          {selectedAlertId ? (
-            <AlertDetailView
-              alertData={selectedAlertData}
-              loading={loading.alertDetails}
-              onDelete={handleDeleteClick}
-              onSendMessage={sendChatMessage}
-              sendingMessage={loading.sendingMessage}
-            />
-          ) : (
-            <Dashboard alertCount={alerts.length} />
-          )}
-        </div>
-      </div>
-
-      <DeleteConfirmDialog
-        isOpen={showDeleteDialog}
-        alertPrefix={
-          selectedAlertData?.alert?.details?.prefix || 'this alert'
+    <Routes>
+      <Route
+        path="/"
+        element={
+          <MainView
+            alerts={alerts}
+            setAlerts={setAlerts}
+            selectedAlertId={selectedAlertId}
+            setSelectedAlertId={setSelectedAlertId}
+            selectedAlertData={selectedAlertData}
+            setSelectedAlertData={setSelectedAlertData}
+            connected={connected}
+            setConnected={setConnected}
+            loading={loading}
+            setLoading={setLoading}
+            showDeleteDialog={showDeleteDialog}
+            setShowDeleteDialog={setShowDeleteDialog}
+            alertToDelete={alertToDelete}
+            setAlertToDelete={setAlertToDelete}
+            error={error}
+            setError={setError}
+            fetchAlerts={fetchAlerts}
+            fetchAlertDetails={fetchAlertDetails}
+            sendChatMessage={sendChatMessage}
+            deleteAlert={deleteAlert}
+            handleSelectAlert={handleSelectAlert}
+            handleDeleteClick={handleDeleteClick}
+            handleDeleteConfirm={handleDeleteConfirm}
+            connectSSE={connectSSE}
+            reconnectTimeoutRef={reconnectTimeoutRef}
+            eventSourceRef={eventSourceRef}
+          />
         }
-        onConfirm={handleDeleteConfirm}
-        onCancel={() => {
-          setShowDeleteDialog(false)
-          setAlertToDelete(null)
-        }}
       />
-    </div>
+      <Route
+        path="/settings"
+        element={
+          <SettingsPage
+            servers={mcpServers}
+            onRefresh={fetchMcpServers}
+            onCreateServer={createMcpServer}
+            onUpdateServer={updateMcpServer}
+            onDeleteServer={deleteMcpServer}
+            onTestServer={testMcpServer}
+            onEnableNative={enableNativeMcpServers}
+          />
+        }
+      />
+    </Routes>
   )
 }
 

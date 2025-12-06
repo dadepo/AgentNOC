@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import McpServersSection from './McpServersSection'
 
 const SETTINGS_SECTIONS = [
@@ -9,7 +10,6 @@ const SETTINGS_SECTIONS = [
 ]
 
 function SettingsPage({ 
-  onBack, 
   servers, 
   onRefresh, 
   onCreateServer, 
@@ -18,6 +18,7 @@ function SettingsPage({
   onTestServer,
   onEnableNative
 }) {
+  const navigate = useNavigate()
   const [activeSection, setActiveSection] = useState('mcp-servers')
 
   const renderContent = () => {
@@ -69,7 +70,7 @@ function SettingsPage({
   return (
     <div className="settings-page">
       <header className="settings-page-header">
-        <button className="back-button" onClick={onBack}>
+        <button className="back-button" onClick={() => navigate('/')}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M19 12H5M12 19l-7-7 7-7"/>
           </svg>
