@@ -25,13 +25,6 @@ pub struct AsnInfo {
     pub group: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct Options {
-    #[serde(rename = "monitorASns")]
-    #[allow(dead_code)]
-    pub monitor_asns: HashMap<String, AsnInfo>,
-}
-
 #[derive(Debug, Clone)]
 pub struct PrefixesConfig {
     pub prefixes: HashMap<String, PrefixInfo>,
@@ -58,18 +51,16 @@ impl PrefixesConfig {
                 if let Some(key_str) = key.as_str() {
                     if key_str == "options" {
                         // Parse the options section
-                        if let serde_yaml::Value::Mapping(options_map) = val {
-                            if let Some(serde_yaml::Value::Mapping(asns_map)) = options_map
+                        if let serde_yaml::Value::Mapping(options_map) = val
+                            && let Some(serde_yaml::Value::Mapping(asns_map)) = options_map
                                 .get(serde_yaml::Value::String("monitorASns".to_string()))
-                            {
-                                for (asn_key, asn_val) in asns_map {
-                                    if let Some(asn_str) = asn_key.as_str() {
-                                        if let Ok(asn_info) =
-                                            serde_yaml::from_value::<AsnInfo>(asn_val.clone())
-                                        {
-                                            monitored_asns.insert(asn_str.to_string(), asn_info);
-                                        }
-                                    }
+                        {
+                            for (asn_key, asn_val) in asns_map {
+                                if let Some(asn_str) = asn_key.as_str()
+                                    && let Ok(asn_info) =
+                                        serde_yaml::from_value::<AsnInfo>(asn_val.clone())
+                                {
+                                    monitored_asns.insert(asn_str.to_string(), asn_info);
                                 }
                             }
                         }
@@ -152,10 +143,10 @@ impl PrefixesConfig {
         }
 
         // Check new prefix if present
-        if let Some(ref newprefix) = alert.details.newprefix {
-            if self.is_prefix_relevant(newprefix) {
-                return true;
-            }
+        if let Some(ref newprefix) = alert.details.newprefix
+            && self.is_prefix_relevant(newprefix)
+        {
+            return true;
         }
 
         // Check ASN in monitored ASNs list
@@ -164,10 +155,10 @@ impl PrefixesConfig {
         }
 
         // Check new origin ASN if present
-        if let Some(ref neworigin) = alert.details.neworigin {
-            if self.is_asn_monitored(neworigin) {
-                return true;
-            }
+        if let Some(ref neworigin) = alert.details.neworigin
+            && self.is_asn_monitored(neworigin)
+        {
+            return true;
         }
 
         false

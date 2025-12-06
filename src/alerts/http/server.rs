@@ -103,32 +103,34 @@ async fn serve_spa(uri: Uri) -> Response {
     let dist_path = PathBuf::from("web-ui/dist").join(file_path);
 
     // If the file exists and is not a directory, serve it
-    if dist_path.exists() && dist_path.is_file() && !file_path.is_empty() {
-        if let Ok(contents) = tokio::fs::read(&dist_path).await {
-            let mut headers = HeaderMap::new();
-            // Set appropriate content type based on file extension
-            if file_path.ends_with(".html") {
-                headers.insert("content-type", HeaderValue::from_static("text/html"));
-            } else if file_path.ends_with(".js") {
-                headers.insert(
-                    "content-type",
-                    HeaderValue::from_static("application/javascript"),
-                );
-            } else if file_path.ends_with(".css") {
-                headers.insert("content-type", HeaderValue::from_static("text/css"));
-            }
-            return Response::builder()
-                .status(StatusCode::OK)
-                .header(
-                    "content-type",
-                    headers
-                        .get("content-type")
-                        .unwrap_or(&HeaderValue::from_static("application/octet-stream")),
-                )
-                .body(Body::from(contents))
-                .unwrap()
-                .into_response();
+    if dist_path.exists()
+        && dist_path.is_file()
+        && !file_path.is_empty()
+        && let Ok(contents) = tokio::fs::read(&dist_path).await
+    {
+        let mut headers = HeaderMap::new();
+        // Set appropriate content type based on file extension
+        if file_path.ends_with(".html") {
+            headers.insert("content-type", HeaderValue::from_static("text/html"));
+        } else if file_path.ends_with(".js") {
+            headers.insert(
+                "content-type",
+                HeaderValue::from_static("application/javascript"),
+            );
+        } else if file_path.ends_with(".css") {
+            headers.insert("content-type", HeaderValue::from_static("text/css"));
         }
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(
+                "content-type",
+                headers
+                    .get("content-type")
+                    .unwrap_or(&HeaderValue::from_static("application/octet-stream")),
+            )
+            .body(Body::from(contents))
+            .unwrap()
+            .into_response();
     }
 
     // For SPA routing, serve index.html for all non-API routes
