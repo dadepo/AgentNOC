@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
+import { Routes, Route } from 'react-router-dom'
 import './index.css'
-import AlertsSidebar from './components/AlertsSidebar'
-import Dashboard from './components/Dashboard'
-import AlertDetailView from './components/AlertDetailView'
-import DeleteConfirmDialog from './components/DeleteConfirmDialog'
+import MainView from './components/MainView'
+import SettingsPage from './components/SettingsPage'
 
 function App() {
   const [alerts, setAlerts] = useState([])
@@ -18,6 +17,9 @@ function App() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [alertToDelete, setAlertToDelete] = useState(null)
   const [error, setError] = useState(null)
+  
+  // MCP Servers state
+  const [mcpServers, setMcpServers] = useState([])
 
   const reconnectTimeoutRef = useRef(null)
   const eventSourceRef = useRef(null)
@@ -229,6 +231,131 @@ function App() {
     }
   }
 
+  // =====================
+  // MCP Server API Functions
+  // =====================
+  
+  const fetchMcpServers = async () => {
+    try {
+      const response = await fetch('/api/mcps')
+      if (!response.ok) {
+        throw new Error('Failed to fetch MCP servers')
+      }
+      const data = await response.json()
+      setMcpServers(data)
+    } catch (err) {
+      console.error('Error fetching MCP servers:', err)
+      setError('Failed to load MCP servers.')
+    }
+  }
+
+  const createMcpServer = async (serverData) => {
+    try {
+      const response = await fetch('/api/mcps', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(serverData),
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.text()
+        throw new Error(errorData || 'Failed to create server')
+      }
+      
+      const newServer = await response.json()
+      setMcpServers((prev) => [...prev, newServer])
+      return newServer
+    } catch (err) {
+      console.error('Error creating MCP server:', err)
+      setError(`Failed to create server: ${err.message}`)
+      throw err
+    }
+  }
+
+  const updateMcpServer = async (id, serverData) => {
+    try {
+      const response = await fetch(`/api/mcps/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(serverData),
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.text()
+        throw new Error(errorData || 'Failed to update server')
+      }
+      
+      const updatedServer = await response.json()
+      setMcpServers((prev) =>
+        prev.map((s) => (s.id === id ? updatedServer : s))
+      )
+      return updatedServer
+    } catch (err) {
+      console.error('Error updating MCP server:', err)
+      setError(`Failed to update server: ${err.message}`)
+      throw err
+    }
+  }
+
+  const deleteMcpServer = async (id) => {
+    try {
+      const response = await fetch(`/api/mcps/${id}`, {
+        method: 'DELETE',
+      })
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete server')
+      }
+      
+      setMcpServers((prev) => prev.filter((s) => s.id !== id))
+    } catch (err) {
+      console.error('Error deleting MCP server:', err)
+      setError('Failed to delete server.')
+      throw err
+    }
+  }
+
+  const testMcpServer = async (id) => {
+    const response = await fetch(`/api/mcps/${id}/test`, {
+      method: 'POST',
+    })
+    
+    if (!response.ok) {
+      const errorData = await response.text()
+      throw new Error(errorData || 'Connection test failed')
+    }
+    
+    return await response.json()
+  }
+
+  const enableNativeMcpServers = async (enabled) => {
+    try {
+      const response = await fetch('/api/mcps/enable-native', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ enabled }),
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.text()
+        throw new Error(errorData || 'Failed to enable/disable native MCP servers')
+      }
+      
+      // Refresh the server list
+      await fetchMcpServers()
+    } catch (err) {
+      console.error('Error enabling/disabling native MCP servers:', err)
+      setError(`Failed to enable/disable native servers: ${err.message}`)
+      throw err
+    }
+  }
+
   // SSE connection
   const connectSSE = () => {
     if (eventSourceRef.current) {
@@ -315,6 +442,7 @@ function App() {
   // Initial fetch on mount
   useEffect(() => {
     fetchAlerts()
+    fetchMcpServers()
   }, [])
 
   // Connect to SSE on mount
@@ -344,55 +472,55 @@ function App() {
   }, [selectedAlertId])
 
   return (
-    <div className="app">
-      <header className="header">
-        <h1>AgentNOC</h1>
-        <div className={`status ${connected ? 'connected' : 'disconnected'}`}>
-          {connected ? '● Connected' : '○ Disconnected'}
-        </div>
-      </header>
-
-      {error && (
-        <div className="error-banner">
-          <span>{error}</span>
-          <button onClick={() => setError(null)}>×</button>
-        </div>
-      )}
-
-      <div className="main-container">
-        <AlertsSidebar
-          alerts={alerts}
-          selectedAlertId={selectedAlertId}
-          onSelectAlert={handleSelectAlert}
-        />
-
-        <div className="main-content">
-          {selectedAlertId ? (
-            <AlertDetailView
-              alertData={selectedAlertData}
-              loading={loading.alertDetails}
-              onDelete={handleDeleteClick}
-              onSendMessage={sendChatMessage}
-              sendingMessage={loading.sendingMessage}
-            />
-          ) : (
-            <Dashboard alertCount={alerts.length} />
-          )}
-                </div>
-              </div>
-
-      <DeleteConfirmDialog
-        isOpen={showDeleteDialog}
-        alertPrefix={
-          selectedAlertData?.alert?.details?.prefix || 'this alert'
+    <Routes>
+      <Route
+        path="/"
+        element={
+          <MainView
+            alerts={alerts}
+            setAlerts={setAlerts}
+            selectedAlertId={selectedAlertId}
+            setSelectedAlertId={setSelectedAlertId}
+            selectedAlertData={selectedAlertData}
+            setSelectedAlertData={setSelectedAlertData}
+            connected={connected}
+            setConnected={setConnected}
+            loading={loading}
+            setLoading={setLoading}
+            showDeleteDialog={showDeleteDialog}
+            setShowDeleteDialog={setShowDeleteDialog}
+            alertToDelete={alertToDelete}
+            setAlertToDelete={setAlertToDelete}
+            error={error}
+            setError={setError}
+            fetchAlerts={fetchAlerts}
+            fetchAlertDetails={fetchAlertDetails}
+            sendChatMessage={sendChatMessage}
+            deleteAlert={deleteAlert}
+            handleSelectAlert={handleSelectAlert}
+            handleDeleteClick={handleDeleteClick}
+            handleDeleteConfirm={handleDeleteConfirm}
+            connectSSE={connectSSE}
+            reconnectTimeoutRef={reconnectTimeoutRef}
+            eventSourceRef={eventSourceRef}
+          />
         }
-        onConfirm={handleDeleteConfirm}
-        onCancel={() => {
-          setShowDeleteDialog(false)
-          setAlertToDelete(null)
-        }}
       />
-    </div>
+      <Route
+        path="/settings"
+        element={
+          <SettingsPage
+            servers={mcpServers}
+            onRefresh={fetchMcpServers}
+            onCreateServer={createMcpServer}
+            onUpdateServer={updateMcpServer}
+            onDeleteServer={deleteMcpServer}
+            onTestServer={testMcpServer}
+            onEnableNative={enableNativeMcpServers}
+          />
+        }
+      />
+    </Routes>
   )
 }
 

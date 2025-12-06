@@ -4,8 +4,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-pub const RIPESTAT_MCP_ENDPONT: &str = "https://mcp-ripestat.taihen.org/mcp";
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct PrefixInfo {
     #[allow(dead_code)]
@@ -584,18 +582,18 @@ options:
         let config = PrefixesConfig::load("prefixes.yml").unwrap();
 
         // Verify prefixes are loaded
-        assert!(config.is_prefix_monitored("217.164.0.0/15"));
-        assert!(config.is_prefix_monitored("192.0.2.0/24"));
+        assert!(config.is_prefix_monitored("176.205.0.0/20"));
+        assert!(config.is_prefix_monitored("193.0.0.0/21"));
 
         // Verify ASNs are loaded
         assert!(config.is_asn_monitored("3333"));
         assert!(config.is_asn_monitored("5384"));
 
         // Verify expected ASNs in prefixes
-        let prefix1 = config.prefixes.get("217.164.0.0/15").unwrap();
+        let prefix1 = config.prefixes.get("176.205.0.0/20").unwrap();
         assert!(prefix1.asn.contains(&5384));
 
-        let prefix2 = config.prefixes.get("192.0.2.0/24").unwrap();
+        let prefix2 = config.prefixes.get("193.0.0.0/21").unwrap();
         assert!(prefix2.asn.contains(&3333));
     }
 

@@ -1,10 +1,12 @@
 use color_eyre::Result;
 use rig::providers::anthropic;
 use serde::Serialize;
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::config::AppConfig;
+use crate::database::db::get_enabled_mcp_servers;
 use crate::mcp_clients;
 
 #[derive(Debug, Serialize)]
@@ -13,7 +15,7 @@ pub struct HealthStatus {
     pub services: HashMap<String, String>,
 }
 
-pub async fn run(_config: &AppConfig) -> Result<HealthStatus> {
+pub async fn run(_config: &AppConfig, db_pool: &SqlitePool) -> Result<HealthStatus> {
     dotenv::dotenv().ok();
 
     tracing::info!("Starting health check");
@@ -23,58 +25,55 @@ pub async fn run(_config: &AppConfig) -> Result<HealthStatus> {
         services: HashMap::new(),
     };
 
-    // Check RIPEstat MCP server (HTTP connection) with timeout
-    let ripestat_status =
-        tokio::time::timeout(Duration::from_secs(3), check_ripestat_connection()).await;
+    // Get all enabled MCP servers and check each one
+    match get_enabled_mcp_servers(db_pool).await {
+        Ok(servers) => {
+            if servers.is_empty() {
+                health_status.services.insert(
+                    "mcp_servers".to_string(),
+                    "no servers configured".to_string(),
+                );
+            } else {
+                for server in servers {
+                    let server_name = format!("mcp_{}", server.name());
 
-    match ripestat_status {
-        Ok(Ok(_)) => {
-            health_status
-                .services
-                .insert("ripestat_mcp".to_string(), "healthy".to_string());
-        }
-        Ok(Err(e)) => {
-            health_status.status = "unhealthy".to_string();
-            health_status
-                .services
-                .insert("ripestat_mcp".to_string(), format!("error: {e}"));
-            tracing::warn!("RIPEstat MCP check failed: {}", e);
-        }
-        Err(_) => {
-            health_status.status = "unhealthy".to_string();
-            health_status
-                .services
-                .insert("ripestat_mcp".to_string(), "timeout".to_string());
-            tracing::warn!("RIPEstat MCP check timed out");
-        }
-    }
+                    // Check connection with timeout
+                    let check_result = tokio::time::timeout(
+                        Duration::from_secs(5),
+                        mcp_clients::test_connection(&server),
+                    )
+                    .await;
 
-    // Check WHOIS MCP server (stdio connection) with timeout
-    let whois_status = tokio::time::timeout(
-        Duration::from_secs(5), // stdio connections may take longer to spawn
-        check_whois_connection(),
-    )
-    .await;
-
-    match whois_status {
-        Ok(Ok(_)) => {
-            health_status
-                .services
-                .insert("whois_mcp".to_string(), "healthy".to_string());
+                    match check_result {
+                        Ok(Ok(tool_count)) => {
+                            health_status
+                                .services
+                                .insert(server_name, format!("healthy ({tool_count} tools)"));
+                        }
+                        Ok(Err(e)) => {
+                            health_status.status = "degraded".to_string();
+                            health_status
+                                .services
+                                .insert(server_name, format!("error: {e}"));
+                            tracing::warn!("MCP server '{}' check failed: {}", server.name(), e);
+                        }
+                        Err(_) => {
+                            health_status.status = "degraded".to_string();
+                            health_status
+                                .services
+                                .insert(server_name, "timeout".to_string());
+                            tracing::warn!("MCP server '{}' check timed out", server.name());
+                        }
+                    }
+                }
+            }
         }
-        Ok(Err(e)) => {
+        Err(e) => {
             health_status.status = "unhealthy".to_string();
             health_status
                 .services
-                .insert("whois_mcp".to_string(), format!("error: {e}"));
-            tracing::warn!("WHOIS MCP check failed: {}", e);
-        }
-        Err(_) => {
-            health_status.status = "unhealthy".to_string();
-            health_status
-                .services
-                .insert("whois_mcp".to_string(), "timeout".to_string());
-            tracing::warn!("WHOIS MCP check timed out");
+                .insert("mcp_servers".to_string(), format!("database error: {e}"));
+            tracing::error!("Failed to get MCP servers for health check: {}", e);
         }
     }
 
@@ -87,20 +86,6 @@ pub async fn run(_config: &AppConfig) -> Result<HealthStatus> {
     tracing::info!("Health check completed: status = {}", health_status.status);
 
     Ok(health_status)
-}
-
-async fn check_ripestat_connection() -> Result<()> {
-    // Use the existing mcp_clients function - it already handles connection and tool listing
-    let _conn = mcp_clients::connect_ripestat().await?;
-    // Connection successful - tools were listed, peer info retrieved
-    Ok(())
-}
-
-async fn check_whois_connection() -> Result<()> {
-    // Use the existing mcp_clients function - it spawns the process and connects via stdio
-    let _conn = mcp_clients::connect_whois().await?;
-    // Connection successful - tools were listed, peer info retrieved
-    Ok(())
 }
 
 fn check_llm_client() -> String {
