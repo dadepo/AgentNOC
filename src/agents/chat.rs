@@ -1,12 +1,20 @@
 use crate::alerts::http::server::BGPAlerterAlert;
 use crate::database::models;
-use crate::mcp_clients;
+use crate::mcp_clients::{self, MCPConnection};
 use color_eyre::Result;
 use rig::completion::Prompt;
 use rig::prelude::CompletionClient;
 use rig::providers::anthropic;
+use sqlx::SqlitePool;
 
 pub struct Chat;
+
+const PREAMBLE: &str = r#"
+You are a BGP security analyst assistant helping NOC operators with follow-up questions about BGP alerts.
+You have access to tools to gather information about IP prefixes, ASNs, and routing announcements.
+You are answering questions about a BGP alert that has already been analyzed. Provide clear, concise answers
+based on the original alert data and your access to current routing information.
+Do not use emojis in your responses. Use plain text formatting only."#;
 
 impl Chat {
     pub async fn run(
@@ -15,31 +23,27 @@ impl Chat {
         chat_history: &[models::ChatMessage],
         user_question: &str,
         config: &crate::config::AppConfig,
+        db_pool: &SqlitePool,
     ) -> Result<String> {
         dotenv::dotenv().ok();
 
         tracing::info!("Starting chat agent run");
 
-        // Connect to RIPEstat MCP server
-        let ripestat_conn = mcp_clients::connect_ripestat().await?;
+        // Connect to all enabled MCP servers from database
+        let mcp_connections = mcp_clients::connect_all_enabled(db_pool).await?;
 
-        // Connect to WHOIS MCP server via stdio
-        let whois_conn = mcp_clients::connect_whois().await?;
+        if mcp_connections.is_empty() {
+            tracing::warn!("No MCP servers available - chat agent will run without tools");
+        } else {
+            let total_tools: usize = mcp_connections.iter().map(|c| c.tool_count()).sum();
+            tracing::info!(
+                "Connected to {} MCP server(s) with {} total tool(s)",
+                mcp_connections.len(),
+                total_tools
+            );
+        }
 
         let completion_model = anthropic::Client::from_env();
-
-        let agent = completion_model
-            .agent(&config.llm_model_name)
-            .preamble(r#"
-            You are a BGP security analyst assistant helping NOC operators with follow-up questions about BGP alerts.
-            You have access to tools to gather information about IP prefixes, ASNs, and routing announcements.
-            You are answering questions about a BGP alert that has already been analyzed. Provide clear, concise answers
-            based on the original alert data and your access to current routing information.
-            Do not use emojis in your responses. Use plain text formatting only."#
-            )
-            .rmcp_tools(ripestat_conn.tools, ripestat_conn.peer)
-            .rmcp_tools(whois_conn.tools, whois_conn.peer)
-            .build();
 
         // Build context from original alert and chat history
         let alert_json = serde_json::to_string_pretty(&alert)?;
@@ -72,8 +76,47 @@ Please provide a clear, concise answer to the user's question. You can use the a
 Do not use emojis - use plain text formatting only."#
         );
 
-        let res = agent.prompt(prompt).multi_turn(3).await?;
+        // Build and run agent with or without MCP tools
+        let res = Self::run_agent_with_tools(
+            completion_model,
+            &config.llm_model_name,
+            mcp_connections,
+            &prompt,
+        )
+        .await?;
 
         Ok(res)
+    }
+
+    async fn run_agent_with_tools(
+        client: anthropic::Client,
+        model_name: &str,
+        connections: Vec<MCPConnection>,
+        prompt: &str,
+    ) -> Result<String> {
+        // Handle the case with no MCP connections
+        if connections.is_empty() {
+            let agent = client.agent(model_name).preamble(PREAMBLE).build();
+            return Ok(agent.prompt(prompt).multi_turn(3).await?);
+        }
+
+        // Build agent with MCP tools
+        // We need to handle the type transformation that happens when adding rmcp_tools
+        let mut connections_iter = connections.into_iter();
+
+        // Start with the first connection
+        let first_conn = connections_iter.next().unwrap();
+        let mut agent_builder = client
+            .agent(model_name)
+            .preamble(PREAMBLE)
+            .rmcp_tools(first_conn.tools, first_conn.peer);
+
+        // Add remaining connections
+        for conn in connections_iter {
+            agent_builder = agent_builder.rmcp_tools(conn.tools, conn.peer);
+        }
+
+        let agent = agent_builder.build();
+        Ok(agent.prompt(prompt).multi_turn(3).await?)
     }
 }

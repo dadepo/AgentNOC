@@ -1,5 +1,6 @@
 use crate::agents::{alert_analyzer, health};
 use crate::database::{db, models};
+use crate::mcp_clients;
 use axum::{
     Json, Router,
     extract::Path,
@@ -71,6 +72,18 @@ pub async fn start(tx: broadcast::Sender<String>, config: AppConfig) -> Result<(
         .route("/api/alerts", get(list_alerts).post(process_alert))
         .route("/api/alerts/{id}", get(get_alert).delete(delete_alert))
         .route("/api/alerts/{id}/chat", post(chat_with_alert))
+        // MCP server management routes
+        .route(
+            "/api/mcp-servers",
+            get(list_mcp_servers).post(create_mcp_server),
+        )
+        .route(
+            "/api/mcp-servers/{id}",
+            get(get_mcp_server)
+                .put(update_mcp_server)
+                .delete(delete_mcp_server),
+        )
+        .route("/api/mcp-servers/{id}/test", post(test_mcp_server))
         // Serve static files as fallback (must be last)
         .fallback_service(serve_dir)
         .with_state(state);
@@ -101,7 +114,7 @@ async fn message_stream(
 async fn health_check(
     State(state): State<AppState>,
 ) -> Result<Json<health::HealthStatus>, StatusCode> {
-    match health::run(&state.config).await {
+    match health::run(&state.config, &state.db_pool).await {
         Ok(status) => {
             // Broadcast health status to web clients
             let status_json =
@@ -177,7 +190,7 @@ async fn process_alert(
         })));
     }
 
-    match alert_analyzer::AlertAnalyzer::run(payload.clone(), &state.config).await {
+    match alert_analyzer::AlertAnalyzer::run(payload.clone(), &state.config, &state.db_pool).await {
         Ok(result) => {
             // Save alert and initial response to database
             let alert_data_json = serde_json::to_string(&payload).map_err(|e| {
@@ -437,6 +450,7 @@ async fn chat_with_alert(
         &chat_history,
         &payload.message,
         &state.config,
+        &state.db_pool,
     )
     .await
     {
@@ -512,6 +526,187 @@ async fn delete_alert(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// List all MCP servers
+async fn list_mcp_servers(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<models::McpServer>>, StatusCode> {
+    let servers = db::get_all_mcp_servers(&state.db_pool).await.map_err(|e| {
+        tracing::error!("Database error: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    Ok(Json(servers))
+}
+
+/// Get a single MCP server by ID
+async fn get_mcp_server(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<models::McpServer>, StatusCode> {
+    let server = db::get_mcp_server_by_id(&state.db_pool, id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Database error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    match server {
+        Some(s) => Ok(Json(s)),
+        None => Err(StatusCode::NOT_FOUND),
+    }
+}
+
+/// Create a new MCP server
+async fn create_mcp_server(
+    State(state): State<AppState>,
+    Json(payload): Json<models::CreateMcpServer>,
+) -> Result<(StatusCode, Json<models::McpServer>), (StatusCode, Json<serde_json::Value>)> {
+    // Validate the payload
+    if let Err(e) = payload.validate() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        ));
+    }
+
+    let server = db::create_mcp_server(&state.db_pool, &payload)
+        .await
+        .map_err(|e| {
+            tracing::error!("Database error: {}", e);
+            // Check if it's a unique constraint violation
+            let error_msg = e.to_string();
+            if error_msg.contains("UNIQUE constraint") {
+                (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({ "error": "A server with this name already exists" })),
+                )
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": "Failed to create server" })),
+                )
+            }
+        })?;
+
+    Ok((StatusCode::CREATED, Json(server)))
+}
+
+/// Update an existing MCP server
+async fn update_mcp_server(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(payload): Json<models::UpdateMcpServer>,
+) -> Result<Json<models::McpServer>, (StatusCode, Json<serde_json::Value>)> {
+    let server = db::update_mcp_server(&state.db_pool, id, &payload)
+        .await
+        .map_err(|e| {
+            tracing::error!("Database error: {}", e);
+            let error_msg = e.to_string();
+            if error_msg.contains("UNIQUE constraint") {
+                (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({ "error": "A server with this name already exists" })),
+                )
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": "Failed to update server" })),
+                )
+            }
+        })?;
+
+    match server {
+        Some(s) => Ok(Json(s)),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "Server not found" })),
+        )),
+    }
+}
+
+/// Delete an MCP server
+async fn delete_mcp_server(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, StatusCode> {
+    let deleted = db::delete_mcp_server(&state.db_pool, id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Database error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    if deleted {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
+/// Test connection response
+#[derive(Serialize)]
+struct TestConnectionResponse {
+    success: bool,
+    tool_count: Option<usize>,
+    error: Option<String>,
+}
+
+/// Test connection to an MCP server
+async fn test_mcp_server(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<TestConnectionResponse>, (StatusCode, Json<TestConnectionResponse>)> {
+    // First get the server
+    let server = db::get_mcp_server_by_id(&state.db_pool, id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Database error: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(TestConnectionResponse {
+                    success: false,
+                    tool_count: None,
+                    error: Some("Database error".to_string()),
+                }),
+            )
+        })?;
+
+    let server = match server {
+        Some(s) => s,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(TestConnectionResponse {
+                    success: false,
+                    tool_count: None,
+                    error: Some("Server not found".to_string()),
+                }),
+            ));
+        }
+    };
+
+    // Try to connect
+    match mcp_clients::test_connection(&server).await {
+        Ok(tool_count) => Ok(Json(TestConnectionResponse {
+            success: true,
+            tool_count: Some(tool_count),
+            error: None,
+        })),
+        Err(e) => {
+            tracing::warn!(
+                "Connection test failed for server {}: {:?}",
+                server.name(),
+                e
+            );
+            Ok(Json(TestConnectionResponse {
+                success: false,
+                tool_count: None,
+                error: Some(e.to_string()),
+            }))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -554,7 +749,37 @@ mod tests {
 
         sqlx::query(
             r#"
+            CREATE TABLE IF NOT EXISTS mcp_servers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                transport_type TEXT NOT NULL CHECK(transport_type IN ('http', 'stdio')),
+                url TEXT,
+                command TEXT,
+                args TEXT,
+                env TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"
             CREATE INDEX IF NOT EXISTS idx_chat_messages_alert_id ON chat_messages(alert_id)
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_mcp_servers_enabled ON mcp_servers(enabled)
             "#,
         )
         .execute(&pool)
@@ -803,5 +1028,269 @@ mod tests {
             }
             _ => panic!("Wrong event type"),
         }
+    }
+
+    // ========================================================================
+    // MCP Server API Tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_list_mcp_servers_empty() {
+        let state = create_test_state().await;
+        let result = list_mcp_servers(State(state)).await;
+
+        assert!(result.is_ok());
+        let servers = result.unwrap();
+        assert_eq!(servers.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_create_mcp_server_http() {
+        let state = create_test_state().await;
+
+        let payload = models::CreateMcpServer::Http {
+            name: "test-http".to_string(),
+            description: Some("Test HTTP server".to_string()),
+            url: "https://example.com/mcp".to_string(),
+            enabled: true,
+        };
+
+        let result = create_mcp_server(State(state), Json(payload)).await;
+
+        assert!(result.is_ok());
+        let (status, Json(server)) = result.unwrap();
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(server.name(), "test-http");
+        assert!(matches!(server, models::McpServer::Http { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_create_mcp_server_stdio() {
+        let state = create_test_state().await;
+
+        let payload = models::CreateMcpServer::Stdio {
+            name: "test-stdio".to_string(),
+            description: Some("Test stdio server".to_string()),
+            command: "echo".to_string(),
+            args: vec!["hello".to_string()],
+            env: std::collections::HashMap::new(),
+            enabled: true,
+        };
+
+        let result = create_mcp_server(State(state), Json(payload)).await;
+
+        assert!(result.is_ok());
+        let (status, Json(server)) = result.unwrap();
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(server.name(), "test-stdio");
+        match server {
+            models::McpServer::Stdio { command, .. } => {
+                assert_eq!(command, "echo");
+            }
+            _ => panic!("Expected Stdio variant"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_mcp_server_validation_error() {
+        let state = create_test_state().await;
+
+        // HTTP server with empty URL
+        let payload = models::CreateMcpServer::Http {
+            name: "test".to_string(),
+            description: None,
+            url: "".to_string(), // Empty URL
+            enabled: true,
+        };
+
+        let result = create_mcp_server(State(state), Json(payload)).await;
+
+        assert!(result.is_err());
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_create_mcp_server_duplicate_name() {
+        let state = create_test_state().await;
+
+        let payload = models::CreateMcpServer::Http {
+            name: "duplicate".to_string(),
+            description: None,
+            url: "https://example.com".to_string(),
+            enabled: true,
+        };
+
+        // Create first server
+        let _ = create_mcp_server(State(state.clone()), Json(payload.clone())).await;
+
+        // Try to create duplicate
+        let result = create_mcp_server(State(state), Json(payload)).await;
+
+        assert!(result.is_err());
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn test_get_mcp_server_by_id() {
+        let state = create_test_state().await;
+
+        // Create a server first
+        let payload = models::CreateMcpServer::Http {
+            name: "test".to_string(),
+            description: None,
+            url: "https://example.com".to_string(),
+            enabled: true,
+        };
+
+        let (_, Json(created)) = create_mcp_server(State(state.clone()), Json(payload))
+            .await
+            .unwrap();
+
+        // Get the server
+        let created_id = created.meta().id;
+        let result = get_mcp_server(State(state), Path(created_id)).await;
+
+        assert!(result.is_ok());
+        let Json(server) = result.unwrap();
+        assert_eq!(server.meta().id, created_id);
+        assert_eq!(server.name(), "test");
+    }
+
+    #[tokio::test]
+    async fn test_get_mcp_server_not_found() {
+        let state = create_test_state().await;
+        let result = get_mcp_server(State(state), Path(9999)).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_update_mcp_server() {
+        let state = create_test_state().await;
+
+        // Create a server first
+        let payload = models::CreateMcpServer::Http {
+            name: "original".to_string(),
+            description: Some("Original".to_string()),
+            url: "https://example.com".to_string(),
+            enabled: true,
+        };
+
+        let (_, Json(created)) = create_mcp_server(State(state.clone()), Json(payload))
+            .await
+            .unwrap();
+
+        // Update the server
+        let update = models::UpdateMcpServer {
+            name: Some("updated".to_string()),
+            description: Some("Updated description".to_string()),
+            enabled: Some(false),
+            ..Default::default()
+        };
+
+        let result = update_mcp_server(State(state), Path(created.meta().id), Json(update)).await;
+
+        assert!(result.is_ok());
+        let Json(updated) = result.unwrap();
+        assert_eq!(updated.name(), "updated");
+        assert_eq!(updated.meta().description.as_deref(), Some("Updated description"));
+        assert!(!updated.meta().enabled);
+        // URL should remain unchanged
+        match updated {
+            models::McpServer::Http { url, .. } => {
+                assert_eq!(url, "https://example.com");
+            }
+            _ => panic!("Expected HTTP variant"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_update_mcp_server_not_found() {
+        let state = create_test_state().await;
+
+        let update = models::UpdateMcpServer {
+            name: Some("new".to_string()),
+            ..Default::default()
+        };
+
+        let result = update_mcp_server(State(state), Path(9999), Json(update)).await;
+
+        assert!(result.is_err());
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_delete_mcp_server_success() {
+        let state = create_test_state().await;
+
+        // Create a server first
+        let payload = models::CreateMcpServer::Http {
+            name: "to-delete".to_string(),
+            description: None,
+            url: "https://example.com".to_string(),
+            enabled: true,
+        };
+
+        let (_, Json(created)) = create_mcp_server(State(state.clone()), Json(payload))
+            .await
+            .unwrap();
+
+        // Delete the server
+        let created_id = created.meta().id;
+        let result = delete_mcp_server(State(state.clone()), Path(created_id)).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), StatusCode::NO_CONTENT);
+
+        // Verify it's gone
+        let get_result = get_mcp_server(State(state), Path(created_id)).await;
+        assert!(get_result.is_err());
+        assert_eq!(get_result.unwrap_err(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_delete_mcp_server_not_found() {
+        let state = create_test_state().await;
+        let result = delete_mcp_server(State(state), Path(9999)).await;
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_list_mcp_servers_with_data() {
+        let state = create_test_state().await;
+
+        // Create two servers
+        let server1 = models::CreateMcpServer::Http {
+            name: "alpha".to_string(),
+            description: None,
+            url: "https://alpha.com".to_string(),
+            enabled: true,
+        };
+        let server2 = models::CreateMcpServer::Stdio {
+            name: "beta".to_string(),
+            description: None,
+            command: "echo".to_string(),
+            args: vec![],
+            env: std::collections::HashMap::new(),
+            enabled: false,
+        };
+
+        let _ = create_mcp_server(State(state.clone()), Json(server1)).await;
+        let _ = create_mcp_server(State(state.clone()), Json(server2)).await;
+
+        let result = list_mcp_servers(State(state)).await;
+
+        assert!(result.is_ok());
+        let servers = result.unwrap();
+        assert_eq!(servers.len(), 2);
+        // Should be sorted by name
+        assert_eq!(servers[0].name(), "alpha");
+        assert_eq!(servers[1].name(), "beta");
     }
 }

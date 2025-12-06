@@ -1,30 +1,14 @@
-use crate::http::server::BGPAlerterAlert;
-use crate::mcp_clients;
+use crate::alerts::http::server::BGPAlerterAlert;
+use crate::mcp_clients::{self, MCPConnection};
 use color_eyre::Result;
 use rig::completion::Prompt;
 use rig::prelude::CompletionClient;
 use rig::providers::anthropic;
+use sqlx::SqlitePool;
 
 pub struct AlertAnalyzer;
 
-impl AlertAnalyzer {
-    pub async fn run(alert: BGPAlerterAlert, config: &crate::config::AppConfig) -> Result<String> {
-        dotenv::dotenv().ok();
-
-        tracing::info!("Starting hijack agent run");
-
-        // Connect to RIPEstat MCP server
-        let ripestat_conn = mcp_clients::connect_ripestat().await?;
-
-        // Connect to WHOIS MCP server via stdio
-        let whois_conn = mcp_clients::connect_whois().await?;
-
-        let completion_model = anthropic::Client::from_env();
-
-        let agent = completion_model
-            .agent(&config.llm_model_name)
-            .preamble(
-                r#"
+const PREAMBLE: &str = r#"
 You are a BGP security analyst for busy NOC operators who need FAST, ACTIONABLE insights.
 
 CRITICAL: Use your available tools to PROACTIVELY gather enrichment data.
@@ -39,16 +23,52 @@ COMMUNICATION RULES:
 - No emojis, minimal formatting
 - If tools fail, provide analysis based solely on alert data and mention tool failures briefly
 
-Your reports should take 30 seconds to read and act upon, not 5 minutes."#,
-            )
-            .rmcp_tools(ripestat_conn.tools, ripestat_conn.peer)
-            .rmcp_tools(whois_conn.tools, whois_conn.peer)
-            .build();
+Your reports should take 30 seconds to read and act upon, not 5 minutes."#;
+
+impl AlertAnalyzer {
+    pub async fn run(
+        alert: BGPAlerterAlert,
+        config: &crate::config::AppConfig,
+        db_pool: &SqlitePool,
+    ) -> Result<String> {
+        dotenv::dotenv().ok();
+
+        tracing::info!("Starting hijack agent run");
+
+        // Connect to all enabled MCP servers from database
+        let mcp_connections = mcp_clients::connect_all_enabled(db_pool).await?;
+
+        if mcp_connections.is_empty() {
+            tracing::warn!("No MCP servers available - agent will run without tools");
+        } else {
+            let total_tools: usize = mcp_connections.iter().map(|c| c.tool_count()).sum();
+            tracing::info!(
+                "Connected to {} MCP server(s) with {} total tool(s)",
+                mcp_connections.len(),
+                total_tools
+            );
+        }
+
+        let completion_model = anthropic::Client::from_env();
 
         let alert_json = serde_json::to_string_pretty(&alert)?;
-        let res = agent
-            .prompt(format!(
-                r#"Analyze this BGP alert and respond with ONLY a valid JSON object. NO markdown, NO explanations, JUST the JSON.
+        let prompt = Self::build_prompt(&alert_json);
+
+        // Build and run agent with or without MCP tools
+        let res = Self::run_agent_with_tools(
+            completion_model,
+            &config.llm_model_name,
+            mcp_connections,
+            &prompt,
+        )
+        .await?;
+
+        Ok(res)
+    }
+
+    fn build_prompt(alert_json: &str) -> String {
+        format!(
+            r#"Analyze this BGP alert and respond with ONLY a valid JSON object. NO markdown, NO explanations, JUST the JSON.
 
 BGP Alert:
 {alert_json}
@@ -84,10 +104,38 @@ EXAMPLES of enriched responses:
 - Bad: "AS9999 announcing prefix expected from AS3333"
 
 CRITICAL: Output ONLY valid JSON. No markdown code blocks, no extra text."#
-            ))
-            .multi_turn(3)
-            .await?;
+        )
+    }
 
-        Ok(res)
+    async fn run_agent_with_tools(
+        client: anthropic::Client,
+        model_name: &str,
+        connections: Vec<MCPConnection>,
+        prompt: &str,
+    ) -> Result<String> {
+        // Handle the case with no MCP connections
+        if connections.is_empty() {
+            let agent = client.agent(model_name).preamble(PREAMBLE).build();
+            return Ok(agent.prompt(prompt).multi_turn(3).await?);
+        }
+
+        // Build agent with MCP tools
+        // We need to handle the type transformation that happens when adding rmcp_tools
+        let mut connections_iter = connections.into_iter();
+
+        // Start with the first connection
+        let first_conn = connections_iter.next().unwrap();
+        let mut agent_builder = client
+            .agent(model_name)
+            .preamble(PREAMBLE)
+            .rmcp_tools(first_conn.tools, first_conn.peer);
+
+        // Add remaining connections
+        for conn in connections_iter {
+            agent_builder = agent_builder.rmcp_tools(conn.tools, conn.peer);
+        }
+
+        let agent = agent_builder.build();
+        Ok(agent.prompt(prompt).multi_turn(3).await?)
     }
 }
