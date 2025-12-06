@@ -3,6 +3,7 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 
 use super::models::{CreateMcpServer, McpServer, UpdateMcpServer, get_current_timestamp};
+use crate::native_mcps;
 
 pub async fn init_database() -> Result<Arc<SqlitePool>> {
     // Database file location
@@ -13,9 +14,6 @@ pub async fn init_database() -> Result<Arc<SqlitePool>> {
 
     // Run migrations
     run_migrations(&pool).await?;
-
-    // Seed default MCP servers if none exist
-    seed_default_mcp_servers(&pool).await?;
 
     tracing::info!("Database initialized at {}", db_path);
     Ok(Arc::new(pool))
@@ -66,6 +64,7 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
             args TEXT,
             env TEXT,
             enabled INTEGER NOT NULL DEFAULT 1,
+            is_native INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -73,6 +72,16 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await?;
+
+    // Migration: Add is_native column if it doesn't exist (for existing databases)
+    sqlx::query(
+        r#"
+        ALTER TABLE mcp_servers ADD COLUMN is_native INTEGER NOT NULL DEFAULT 0
+        "#,
+    )
+    .execute(pool)
+    .await
+    .ok(); // Ignore error if column already exists
 
     // Create indexes for performance
     sqlx::query(
@@ -102,78 +111,39 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-async fn seed_default_mcp_servers(pool: &SqlitePool) -> Result<()> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mcp_servers")
-        .fetch_one(pool)
-        .await?;
-
-    if count == 0 {
-        tracing::info!("Seeding default MCP servers...");
-
-        let timestamp = get_current_timestamp();
-
-        // Add default RIPEstat server (HTTP)
-        sqlx::query(
-            r#"
-            INSERT INTO mcp_servers (name, description, transport_type, url, enabled, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind("ripestat")
-        .bind("RIPEstat MCP Server for BGP and routing information")
-        .bind("http")
-        .bind("https://mcp-ripestat.taihen.org/mcp")
-        .bind(1)
-        .bind(&timestamp)
-        .bind(&timestamp)
-        .execute(pool)
-        .await?;
-
-        // Add default WHOIS server (stdio)
-        let args = serde_json::to_string(&vec![
-            "--from",
-            "git+https://github.com/dadepo/whois-mcp.git",
-            "whois-mcp",
-        ])?;
-
-        sqlx::query(
-            r#"
-            INSERT INTO mcp_servers (name, description, transport_type, command, args, enabled, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind("whois")
-        .bind("WHOIS MCP Server for domain and IP lookups")
-        .bind("stdio")
-        .bind("uvx")
-        .bind(&args)
-        .bind(1)
-        .bind(&timestamp)
-        .bind(&timestamp)
-        .execute(pool)
-        .await?;
-
-        tracing::info!("Default MCP servers seeded successfully");
-    }
-
-    Ok(())
-}
-
 // ============================================================================
 // MCP Server CRUD Operations
 // ============================================================================
 
-/// Get all MCP servers
-pub async fn get_all_mcp_servers(pool: &SqlitePool) -> Result<Vec<McpServer>> {
-    let rows = sqlx::query(
-        r#"
-        SELECT id, name, description, transport_type, url, command, args, env, enabled, created_at, updated_at
-        FROM mcp_servers
-        ORDER BY name ASC
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
+/// Get all MCP servers, optionally filtered by kind
+pub async fn get_all_mcp_servers(pool: &SqlitePool, kind: Option<&str>) -> Result<Vec<McpServer>> {
+    let query = match kind {
+        Some("native") => {
+            r#"
+            SELECT id, name, description, transport_type, url, command, args, env, enabled, is_native, created_at, updated_at
+            FROM mcp_servers
+            WHERE is_native = 1
+            ORDER BY name ASC
+            "#
+        }
+        Some("custom") => {
+            r#"
+            SELECT id, name, description, transport_type, url, command, args, env, enabled, is_native, created_at, updated_at
+            FROM mcp_servers
+            WHERE is_native = 0
+            ORDER BY name ASC
+            "#
+        }
+        _ => {
+            r#"
+            SELECT id, name, description, transport_type, url, command, args, env, enabled, is_native, created_at, updated_at
+            FROM mcp_servers
+            ORDER BY name ASC
+            "#
+        }
+    };
+
+    let rows = sqlx::query(query).fetch_all(pool).await?;
 
     let mut servers = Vec::new();
     for row in rows {
@@ -190,6 +160,7 @@ pub async fn get_all_mcp_servers(pool: &SqlitePool) -> Result<Vec<McpServer>> {
             row.get(8),
             row.get(9),
             row.get(10),
+            row.get(11),
         )
         .map_err(|e| color_eyre::eyre::eyre!("Failed to parse MCP server: {}", e))?;
         servers.push(server);
@@ -202,7 +173,7 @@ pub async fn get_all_mcp_servers(pool: &SqlitePool) -> Result<Vec<McpServer>> {
 pub async fn get_enabled_mcp_servers(pool: &SqlitePool) -> Result<Vec<McpServer>> {
     let rows = sqlx::query(
         r#"
-        SELECT id, name, description, transport_type, url, command, args, env, enabled, created_at, updated_at
+        SELECT id, name, description, transport_type, url, command, args, env, enabled, is_native, created_at, updated_at
         FROM mcp_servers
         WHERE enabled = 1
         ORDER BY name ASC
@@ -226,6 +197,7 @@ pub async fn get_enabled_mcp_servers(pool: &SqlitePool) -> Result<Vec<McpServer>
             row.get(8),
             row.get(9),
             row.get(10),
+            row.get(11),
         )
         .map_err(|e| color_eyre::eyre::eyre!("Failed to parse MCP server: {}", e))?;
         servers.push(server);
@@ -238,7 +210,7 @@ pub async fn get_enabled_mcp_servers(pool: &SqlitePool) -> Result<Vec<McpServer>
 pub async fn get_mcp_server_by_id(pool: &SqlitePool, id: i64) -> Result<Option<McpServer>> {
     let row = sqlx::query(
         r#"
-        SELECT id, name, description, transport_type, url, command, args, env, enabled, created_at, updated_at
+        SELECT id, name, description, transport_type, url, command, args, env, enabled, is_native, created_at, updated_at
         FROM mcp_servers
         WHERE id = ?
         "#,
@@ -262,6 +234,7 @@ pub async fn get_mcp_server_by_id(pool: &SqlitePool, id: i64) -> Result<Option<M
                 row.get(8),
                 row.get(9),
                 row.get(10),
+                row.get(11),
             )
             .map_err(|e| color_eyre::eyre::eyre!("Failed to parse MCP server: {}", e))?;
             Ok(Some(server))
@@ -329,8 +302,8 @@ pub async fn create_mcp_server(pool: &SqlitePool, server: &CreateMcpServer) -> R
 
     let id = sqlx::query_scalar::<_, i64>(
         r#"
-        INSERT INTO mcp_servers (name, description, transport_type, url, command, args, env, enabled, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO mcp_servers (name, description, transport_type, url, command, args, env, enabled, is_native, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id
         "#,
     )
@@ -342,6 +315,7 @@ pub async fn create_mcp_server(pool: &SqlitePool, server: &CreateMcpServer) -> R
     .bind(&args_json)
     .bind(&env_json)
     .bind(enabled as i64)
+    .bind(0) // is_native = 0 for user-created servers
     .bind(&timestamp)
     .bind(&timestamp)
     .fetch_one(pool)
@@ -461,6 +435,118 @@ pub async fn delete_mcp_server(pool: &SqlitePool, id: i64) -> Result<bool> {
         .await?;
 
     Ok(result.rows_affected() > 0)
+}
+
+/// Enable or disable native MCP servers
+/// If enabled=true: Insert all native MCPs from code (skip if already exist)
+/// If enabled=false: Delete all native MCPs from DB
+pub async fn enable_native_mcp_servers(pool: &SqlitePool, enabled: bool) -> Result<()> {
+    if enabled {
+        let timestamp = get_current_timestamp();
+        let native_servers = native_mcps::get_native_mcp_servers();
+
+        for server in native_servers {
+            // Check if server already exists
+            let exists: Option<i64> =
+                sqlx::query_scalar("SELECT id FROM mcp_servers WHERE name = ? AND is_native = 1")
+                    .bind(server.name())
+                    .fetch_optional(pool)
+                    .await?;
+
+            if exists.is_some() {
+                // Already exists, skip
+                continue;
+            }
+
+            // Extract fields based on variant
+            let (
+                name,
+                description,
+                transport_type,
+                url,
+                command,
+                args_json,
+                env_json,
+                enabled_flag,
+            ) = match &server {
+                CreateMcpServer::Http {
+                    name,
+                    description,
+                    url,
+                    enabled,
+                } => (
+                    name.clone(),
+                    description.clone(),
+                    "http",
+                    Some(url.clone()),
+                    None,
+                    None,
+                    None,
+                    *enabled,
+                ),
+                CreateMcpServer::Stdio {
+                    name,
+                    description,
+                    command,
+                    args,
+                    env,
+                    enabled,
+                } => {
+                    let args_json = if args.is_empty() {
+                        None
+                    } else {
+                        Some(serde_json::to_string(args)?)
+                    };
+                    let env_json = if env.is_empty() {
+                        None
+                    } else {
+                        Some(serde_json::to_string(env)?)
+                    };
+                    (
+                        name.clone(),
+                        description.clone(),
+                        "stdio",
+                        None,
+                        Some(command.clone()),
+                        args_json,
+                        env_json,
+                        *enabled,
+                    )
+                }
+            };
+
+            sqlx::query(
+                r#"
+                INSERT INTO mcp_servers (name, description, transport_type, url, command, args, env, enabled, is_native, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+            )
+            .bind(&name)
+            .bind(&description)
+            .bind(transport_type)
+            .bind(&url)
+            .bind(&command)
+            .bind(&args_json)
+            .bind(&env_json)
+            .bind(enabled_flag as i64)
+            .bind(1) // is_native = 1
+            .bind(&timestamp)
+            .bind(&timestamp)
+            .execute(pool)
+            .await?;
+        }
+
+        tracing::info!("Native MCP servers enabled");
+    } else {
+        // Delete all native MCP servers
+        sqlx::query("DELETE FROM mcp_servers WHERE is_native = 1")
+            .execute(pool)
+            .await?;
+
+        tracing::info!("Native MCP servers disabled");
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -589,7 +675,7 @@ mod tests {
         create_mcp_server(&pool, &server1).await.unwrap();
         create_mcp_server(&pool, &server2).await.unwrap();
 
-        let servers = get_all_mcp_servers(&pool).await.unwrap();
+        let servers = get_all_mcp_servers(&pool, None).await.unwrap();
         assert_eq!(servers.len(), 2);
         // Should be sorted by name
         assert_eq!(servers[0].name(), "alpha");
@@ -635,7 +721,9 @@ mod tests {
 
         let created = create_mcp_server(&pool, &server).await.unwrap();
 
-        let retrieved = get_mcp_server_by_id(&pool, created.meta().id).await.unwrap();
+        let retrieved = get_mcp_server_by_id(&pool, created.meta().id)
+            .await
+            .unwrap();
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.name(), "test");
@@ -671,7 +759,10 @@ mod tests {
         assert!(updated.is_some());
         let updated = updated.unwrap();
         assert_eq!(updated.name(), "updated");
-        assert_eq!(updated.meta().description.as_deref(), Some("Updated description"));
+        assert_eq!(
+            updated.meta().description.as_deref(),
+            Some("Updated description")
+        );
         assert!(!updated.meta().enabled);
 
         // URL should remain unchanged
@@ -723,18 +814,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_seed_default_mcp_servers() {
+    async fn test_enable_native_mcp_servers() {
         let pool = create_test_db().await.unwrap();
 
-        // Seed should work on empty database
-        seed_default_mcp_servers(&pool).await.unwrap();
+        // Enable native servers
+        enable_native_mcp_servers(&pool, true).await.unwrap();
 
-        let servers = get_all_mcp_servers(&pool).await.unwrap();
+        let servers = get_all_mcp_servers(&pool, None).await.unwrap();
         assert_eq!(servers.len(), 2);
 
         // Find the servers by name
         let ripestat = servers.iter().find(|s| s.name() == "ripestat").unwrap();
         assert!(matches!(ripestat, McpServer::Http { .. }));
+        assert!(ripestat.meta().is_native);
 
         let whois = servers.iter().find(|s| s.name() == "whois").unwrap();
         match whois {
@@ -744,11 +836,17 @@ mod tests {
             }
             _ => panic!("Expected Stdio variant"),
         }
+        assert!(whois.meta().is_native);
 
-        // Running seed again should not add duplicates
-        seed_default_mcp_servers(&pool).await.unwrap();
-        let servers = get_all_mcp_servers(&pool).await.unwrap();
+        // Running enable again should not add duplicates
+        enable_native_mcp_servers(&pool, true).await.unwrap();
+        let servers = get_all_mcp_servers(&pool, None).await.unwrap();
         assert_eq!(servers.len(), 2);
+
+        // Disable native servers
+        enable_native_mcp_servers(&pool, false).await.unwrap();
+        let servers = get_all_mcp_servers(&pool, None).await.unwrap();
+        assert_eq!(servers.len(), 0);
     }
 
     #[tokio::test]

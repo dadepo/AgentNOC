@@ -1210,6 +1210,46 @@ body {
   background-color: #2563eb;
 }
 
+/* Native MCPs Section */
+.native-mcps-section {
+  margin-bottom: 3rem;
+  padding-bottom: 2rem;
+  border-bottom: 1px solid #3a3a3a;
+}
+
+.native-mcps-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 1.5rem;
+}
+
+.native-mcps-header h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #ffffff;
+  margin: 0 0 0.5rem 0;
+}
+
+.native-mcps-header p {
+  color: #888;
+  font-size: 0.875rem;
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Custom MCPs Section */
+.custom-mcps-section {
+  margin-top: 2rem;
+}
+
+.custom-mcps-header h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #ffffff;
+  margin: 0 0 1.5rem 0;
+}
+
 .add-server-btn {
   background-color: #3b82f6;
   color: white;

@@ -10,6 +10,8 @@ pub struct McpServerDetails {
     pub name: String,
     pub description: Option<String>,
     pub enabled: bool,
+    #[serde(default)]
+    pub is_native: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -59,6 +61,7 @@ impl McpServer {
         args: Option<String>,
         env: Option<String>,
         enabled: i64,
+        is_native: i64,
         created_at: String,
         updated_at: String,
     ) -> Result<Self, String> {
@@ -67,6 +70,7 @@ impl McpServer {
             name,
             description,
             enabled: enabled != 0,
+            is_native: is_native != 0,
             created_at,
             updated_at,
         };
@@ -139,6 +143,14 @@ fn default_enabled() -> bool {
 }
 
 impl CreateMcpServer {
+    /// Get server name
+    pub fn name(&self) -> &str {
+        match self {
+            CreateMcpServer::Http { name, .. } => name,
+            CreateMcpServer::Stdio { name, .. } => name,
+        }
+    }
+
     /// Validate the create request
     pub fn validate(&self) -> Result<(), String> {
         match self {
@@ -252,6 +264,7 @@ mod tests {
             None,
             None,
             1,
+            0, // is_native
             "2025-01-01T00:00:00Z".to_string(),
             "2025-01-01T00:00:00Z".to_string(),
         )
@@ -284,6 +297,7 @@ mod tests {
             Some(args_json.to_string()),
             Some(env_json.to_string()),
             1,
+            0, // is_native
             "2025-01-01T00:00:00Z".to_string(),
             "2025-01-01T00:00:00Z".to_string(),
         )
@@ -319,6 +333,7 @@ mod tests {
             None,
             None,
             1,
+            0, // is_native
             "2025-01-01T00:00:00Z".to_string(),
             "2025-01-01T00:00:00Z".to_string(),
         );
@@ -338,6 +353,7 @@ mod tests {
             None,
             None,
             1,
+            0, // is_native
             "2025-01-01T00:00:00Z".to_string(),
             "2025-01-01T00:00:00Z".to_string(),
         );
@@ -357,6 +373,7 @@ mod tests {
             None,
             None,
             1,
+            0, // is_native
             "2025-01-01T00:00:00Z".to_string(),
             "2025-01-01T00:00:00Z".to_string(),
         );
@@ -372,6 +389,7 @@ mod tests {
                 name: "test".to_string(),
                 description: Some("Test server".to_string()),
                 enabled: true,
+                is_native: false,
                 created_at: "2025-01-01T00:00:00Z".to_string(),
                 updated_at: "2025-01-01T00:00:00Z".to_string(),
             },
@@ -395,6 +413,7 @@ mod tests {
                 name: "test".to_string(),
                 description: None,
                 enabled: true,
+                is_native: false,
                 created_at: "2025-01-01T00:00:00Z".to_string(),
                 updated_at: "2025-01-01T00:00:00Z".to_string(),
             },

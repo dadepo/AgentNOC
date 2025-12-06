@@ -15,7 +15,8 @@ function SettingsPage({
   onCreateServer, 
   onUpdateServer, 
   onDeleteServer, 
-  onTestServer 
+  onTestServer,
+  onEnableNative
 }) {
   const [activeSection, setActiveSection] = useState('mcp-servers')
 
@@ -30,6 +31,7 @@ function SettingsPage({
             onUpdateServer={onUpdateServer}
             onDeleteServer={onDeleteServer}
             onTestServer={onTestServer}
+            onEnableNative={onEnableNative}
           />
         )
       case 'agents':

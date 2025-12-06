@@ -5,6 +5,7 @@ function McpServerCard({ server, onEdit, onDelete, onTest, onToggleEnabled }) {
   const [testResult, setTestResult] = useState(null)
 
   const isHttp = server.transport_type === 'http'
+  const isNative = server.is_native === true
 
   const handleTest = async () => {
     setTesting(true)
@@ -33,14 +34,16 @@ function McpServerCard({ server, onEdit, onDelete, onTest, onToggleEnabled }) {
             </span>
           </div>
         </div>
-        <label className="toggle-switch">
-          <input
-            type="checkbox"
-            checked={server.enabled}
-            onChange={onToggleEnabled}
-          />
-          <span className="toggle-slider"></span>
-        </label>
+        {!isNative && onToggleEnabled && (
+          <label className="toggle-switch">
+            <input
+              type="checkbox"
+              checked={server.enabled}
+              onChange={onToggleEnabled}
+            />
+            <span className="toggle-slider"></span>
+          </label>
+        )}
       </div>
 
       {server.description && (
@@ -83,12 +86,16 @@ function McpServerCard({ server, onEdit, onDelete, onTest, onToggleEnabled }) {
         >
           {testing ? 'Testing...' : 'Test'}
         </button>
-        <button className="action-btn edit-btn" onClick={onEdit}>
-          Edit
-        </button>
-        <button className="action-btn delete-btn" onClick={onDelete}>
-          Delete
-        </button>
+        {!isNative && onEdit && (
+          <button className="action-btn edit-btn" onClick={onEdit}>
+            Edit
+          </button>
+        )}
+        {!isNative && onDelete && (
+          <button className="action-btn delete-btn" onClick={onDelete}>
+            Delete
+          </button>
+        )}
       </div>
     </div>
   )

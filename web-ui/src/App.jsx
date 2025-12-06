@@ -240,7 +240,7 @@ function App() {
   
   const fetchMcpServers = async () => {
     try {
-      const response = await fetch('/api/mcp-servers')
+      const response = await fetch('/api/mcps')
       if (!response.ok) {
         throw new Error('Failed to fetch MCP servers')
       }
@@ -254,7 +254,7 @@ function App() {
 
   const createMcpServer = async (serverData) => {
     try {
-      const response = await fetch('/api/mcp-servers', {
+      const response = await fetch('/api/mcps', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -279,7 +279,7 @@ function App() {
 
   const updateMcpServer = async (id, serverData) => {
     try {
-      const response = await fetch(`/api/mcp-servers/${id}`, {
+      const response = await fetch(`/api/mcps/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -306,7 +306,7 @@ function App() {
 
   const deleteMcpServer = async (id) => {
     try {
-      const response = await fetch(`/api/mcp-servers/${id}`, {
+      const response = await fetch(`/api/mcps/${id}`, {
         method: 'DELETE',
       })
       
@@ -323,7 +323,7 @@ function App() {
   }
 
   const testMcpServer = async (id) => {
-    const response = await fetch(`/api/mcp-servers/${id}/test`, {
+    const response = await fetch(`/api/mcps/${id}/test`, {
       method: 'POST',
     })
     
@@ -333,6 +333,30 @@ function App() {
     }
     
     return await response.json()
+  }
+
+  const enableNativeMcpServers = async (enabled) => {
+    try {
+      const response = await fetch('/api/mcps/enable-native', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ enabled }),
+      })
+      
+      if (!response.ok) {
+        const errorData = await response.text()
+        throw new Error(errorData || 'Failed to enable/disable native MCP servers')
+      }
+      
+      // Refresh the server list
+      await fetchMcpServers()
+    } catch (err) {
+      console.error('Error enabling/disabling native MCP servers:', err)
+      setError(`Failed to enable/disable native servers: ${err.message}`)
+      throw err
+    }
   }
 
   // SSE connection
@@ -460,6 +484,7 @@ function App() {
         onUpdateServer={updateMcpServer}
         onDeleteServer={deleteMcpServer}
         onTestServer={testMcpServer}
+        onEnableNative={enableNativeMcpServers}
       />
     )
   }

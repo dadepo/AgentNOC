@@ -3,8 +3,8 @@ use crate::database::{db, models};
 use crate::mcp_clients;
 use axum::{
     Json, Router,
-    extract::Path,
     extract::State,
+    extract::{Path, Query},
     http::StatusCode,
     response::sse::{Event, Sse},
     routing::{get, post},
@@ -73,17 +73,15 @@ pub async fn start(tx: broadcast::Sender<String>, config: AppConfig) -> Result<(
         .route("/api/alerts/{id}", get(get_alert).delete(delete_alert))
         .route("/api/alerts/{id}/chat", post(chat_with_alert))
         // MCP server management routes
+        .route("/api/mcps", get(list_mcp_servers).post(create_mcp_server))
         .route(
-            "/api/mcp-servers",
-            get(list_mcp_servers).post(create_mcp_server),
-        )
-        .route(
-            "/api/mcp-servers/{id}",
+            "/api/mcps/{id}",
             get(get_mcp_server)
                 .put(update_mcp_server)
                 .delete(delete_mcp_server),
         )
-        .route("/api/mcp-servers/{id}/test", post(test_mcp_server))
+        .route("/api/mcps/{id}/test", post(test_mcp_server))
+        .route("/api/mcps/enable-native", post(enable_native_mcp_servers))
         // Serve static files as fallback (must be last)
         .fallback_service(serve_dir)
         .with_state(state);
@@ -527,13 +525,22 @@ async fn delete_alert(
 }
 
 /// List all MCP servers
+#[derive(Deserialize)]
+struct ListMcpServersQuery {
+    kind: Option<String>,
+}
+
 async fn list_mcp_servers(
     State(state): State<AppState>,
+    Query(query): Query<ListMcpServersQuery>,
 ) -> Result<Json<Vec<models::McpServer>>, StatusCode> {
-    let servers = db::get_all_mcp_servers(&state.db_pool).await.map_err(|e| {
-        tracing::error!("Database error: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let kind = query.kind.as_deref();
+    let servers = db::get_all_mcp_servers(&state.db_pool, kind)
+        .await
+        .map_err(|e| {
+            tracing::error!("Database error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     Ok(Json(servers))
 }
@@ -707,6 +714,29 @@ async fn test_mcp_server(
     }
 }
 
+#[derive(Deserialize)]
+struct EnableNativeRequest {
+    enabled: bool,
+}
+
+/// Enable or disable native MCP servers
+async fn enable_native_mcp_servers(
+    State(state): State<AppState>,
+    Json(payload): Json<EnableNativeRequest>,
+) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
+    db::enable_native_mcp_servers(&state.db_pool, payload.enabled)
+        .await
+        .map_err(|e| {
+            tracing::error!("Database error: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "Failed to enable/disable native MCP servers" })),
+            )
+        })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -759,6 +789,7 @@ mod tests {
                 args TEXT,
                 env TEXT,
                 enabled INTEGER NOT NULL DEFAULT 1,
+                is_native INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -1037,7 +1068,8 @@ mod tests {
     #[tokio::test]
     async fn test_list_mcp_servers_empty() {
         let state = create_test_state().await;
-        let result = list_mcp_servers(State(state)).await;
+        let query = Query(ListMcpServersQuery { kind: None });
+        let result = list_mcp_servers(State(state), query).await;
 
         assert!(result.is_ok());
         let servers = result.unwrap();
@@ -1196,7 +1228,10 @@ mod tests {
         assert!(result.is_ok());
         let Json(updated) = result.unwrap();
         assert_eq!(updated.name(), "updated");
-        assert_eq!(updated.meta().description.as_deref(), Some("Updated description"));
+        assert_eq!(
+            updated.meta().description.as_deref(),
+            Some("Updated description")
+        );
         assert!(!updated.meta().enabled);
         // URL should remain unchanged
         match updated {
@@ -1284,7 +1319,8 @@ mod tests {
         let _ = create_mcp_server(State(state.clone()), Json(server1)).await;
         let _ = create_mcp_server(State(state.clone()), Json(server2)).await;
 
-        let result = list_mcp_servers(State(state)).await;
+        let query = Query(ListMcpServersQuery { kind: None });
+        let result = list_mcp_servers(State(state), query).await;
 
         assert!(result.is_ok());
         let servers = result.unwrap();

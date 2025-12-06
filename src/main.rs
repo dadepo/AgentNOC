@@ -3,6 +3,7 @@ mod alerts;
 mod config;
 mod database;
 mod mcp_clients;
+mod native_mcps;
 
 use alerts::http;
 use std::fs::OpenOptions;
