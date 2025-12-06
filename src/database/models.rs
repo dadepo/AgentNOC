@@ -51,6 +51,7 @@ impl McpServer {
     }
 
     /// Create from database row values
+    #[allow(clippy::too_many_arguments)]
     pub fn from_row(
         id: i64,
         name: String,
@@ -91,12 +92,12 @@ impl McpServer {
                 let args: Vec<String> = args
                     .map(|s| serde_json::from_str(&s))
                     .transpose()
-                    .map_err(|e| format!("Failed to parse args JSON: {}", e))?
+                    .map_err(|e| format!("Failed to parse args JSON: {e}"))?
                     .unwrap_or_default();
                 let env: HashMap<String, String> = env
                     .map(|s| serde_json::from_str(&s))
                     .transpose()
-                    .map_err(|e| format!("Failed to parse env JSON: {}", e))?
+                    .map_err(|e| format!("Failed to parse env JSON: {e}"))?
                     .unwrap_or_default();
                 Ok(McpServer::Stdio {
                     meta,
@@ -106,8 +107,7 @@ impl McpServer {
                 })
             }
             _ => Err(format!(
-                "Invalid transport type: '{}'. Expected 'http' or 'stdio'",
-                transport_type
+                "Invalid transport type: '{transport_type}'. Expected 'http' or 'stdio'"
             )),
         }
     }

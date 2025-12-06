@@ -48,7 +48,7 @@ pub async fn run(_config: &AppConfig, db_pool: &SqlitePool) -> Result<HealthStat
                         Ok(Ok(tool_count)) => {
                             health_status
                                 .services
-                                .insert(server_name, format!("healthy ({} tools)", tool_count));
+                                .insert(server_name, format!("healthy ({tool_count} tools)"));
                         }
                         Ok(Err(e)) => {
                             health_status.status = "degraded".to_string();
