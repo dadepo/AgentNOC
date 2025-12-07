@@ -258,13 +258,14 @@ async fn process_alert(
 
             let alert_id = sqlx::query_scalar::<_, i64>(
                 r#"
-                INSERT INTO alerts (alert_data, initial_response, created_at, updated_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO alerts (alert_data, initial_response, kind, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
                 RETURNING id
                 "#,
             )
             .bind(&alert_data_json)
             .bind(&result)
+            .bind(models::AlertKind::BgpAlerter.as_str())
             .bind(&timestamp)
             .bind(&timestamp)
             .fetch_one(&*state.db_pool)
@@ -307,7 +308,7 @@ async fn list_alerts(
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
     let rows = sqlx::query(
         r#"
-        SELECT id, alert_data, created_at
+        SELECT id, alert_data, kind, created_at
         FROM alerts
         ORDER BY created_at DESC
         "#,
@@ -323,7 +324,8 @@ async fn list_alerts(
     for row in rows {
         let id: i64 = row.get(0);
         let alert_data: String = row.get(1);
-        let created_at: String = row.get(2);
+        let kind: String = row.get(2);
+        let created_at: String = row.get(3);
 
         let alert_json: serde_json::Value =
             serde_json::from_str(&alert_data).unwrap_or_else(|_| serde_json::json!({}));
@@ -331,6 +333,7 @@ async fn list_alerts(
         alerts.push(serde_json::json!({
             "id": id,
             "alert_data": alert_json,
+            "kind": kind,
             "created_at": created_at
         }));
     }
@@ -345,7 +348,7 @@ async fn get_alert(
     // Get alert
     let alert_row = sqlx::query(
         r#"
-        SELECT id, alert_data, initial_response, created_at, updated_at
+        SELECT id, alert_data, initial_response, kind, created_at, updated_at
         FROM alerts
         WHERE id = ?
         "#,
@@ -365,8 +368,9 @@ async fn get_alert(
 
     let alert_data: String = alert_row.get(1);
     let initial_response: String = alert_row.get(2);
-    let created_at: String = alert_row.get(3);
-    let updated_at: String = alert_row.get(4);
+    let kind: String = alert_row.get(3);
+    let created_at: String = alert_row.get(4);
+    let updated_at: String = alert_row.get(5);
 
     let alert_json: serde_json::Value = serde_json::from_str(&alert_data).map_err(|e| {
         tracing::error!("Failed to parse alert data: {}", e);
@@ -410,6 +414,7 @@ async fn get_alert(
     Ok(Json(serde_json::json!({
         "alert": alert_json,
         "initial_response": initial_response,
+        "kind": kind,
         "chat_messages": chat_messages,
         "created_at": created_at,
         "updated_at": updated_at
@@ -424,7 +429,7 @@ async fn chat_with_alert(
     // Get alert and chat history
     let alert_row = sqlx::query(
         r#"
-        SELECT id, alert_data, initial_response
+        SELECT id, alert_data, initial_response, kind
         FROM alerts
         WHERE id = ?
         "#,
@@ -810,6 +815,7 @@ mod tests {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 alert_data TEXT NOT NULL,
                 initial_response TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'bgp_alerter',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -909,12 +915,13 @@ mod tests {
         let timestamp = models::get_current_timestamp();
         sqlx::query(
             r#"
-            INSERT INTO alerts (alert_data, initial_response, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO alerts (alert_data, initial_response, kind, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             "#,
         )
         .bind(alert_data)
         .bind("Test response")
+        .bind(models::AlertKind::BgpAlerter.as_str())
         .bind(&timestamp)
         .bind(&timestamp)
         .execute(&*state.db_pool)
@@ -947,13 +954,14 @@ mod tests {
         let timestamp = models::get_current_timestamp();
         let alert_id = sqlx::query_scalar::<_, i64>(
             r#"
-            INSERT INTO alerts (alert_data, initial_response, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO alerts (alert_data, initial_response, kind, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             RETURNING id
             "#,
         )
         .bind(alert_data)
         .bind("Initial response")
+        .bind(models::AlertKind::BgpAlerter.as_str())
         .bind(&timestamp)
         .bind(&timestamp)
         .fetch_one(&*state.db_pool)
@@ -1015,13 +1023,14 @@ mod tests {
         let timestamp = models::get_current_timestamp();
         let alert_id = sqlx::query_scalar::<_, i64>(
             r#"
-            INSERT INTO alerts (alert_data, initial_response, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO alerts (alert_data, initial_response, kind, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             RETURNING id
             "#,
         )
         .bind(alert_data)
         .bind("response")
+        .bind(models::AlertKind::BgpAlerter.as_str())
         .bind(&timestamp)
         .bind(&timestamp)
         .fetch_one(&*state.db_pool)
