@@ -18,28 +18,47 @@ pub async fn process_alert(
     State(state): State<AppState>,
     Json(payload): Json<BGPAlerterAlert>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    tracing::debug!("Received alert: {:#?}", payload);
+    tracing::info!(
+        "Received alert: prefix={}, asn={}, neworigin={:?}",
+        payload.details.prefix,
+        payload.details.asn,
+        payload.details.neworigin
+    );
 
     // Check if alert is relevant to our monitored resources
     if !state.prefixes_config.is_alert_relevant(&payload) {
-        tracing::debug!(
-            "Alert for prefix {} (ASN: {}) is not relevant to monitored resources, skipping",
+        tracing::warn!(
+            "Alert for prefix {} (ASN: {}) is not relevant to monitored resources, skipping. \
+            Check prefixes.yml to ensure this prefix or ASN is monitored.",
             payload.details.prefix,
             payload.details.asn
         );
         let event = SseEvent::Error {
             message: format!(
-                "Alert ignored: prefix {} not in monitored resources",
-                payload.details.prefix
+                "Alert ignored: prefix {} (ASN: {}) not in monitored resources. \
+                Add it to prefixes.yml to process alerts for this prefix/ASN.",
+                payload.details.prefix, payload.details.asn
             ),
         };
         let _ = state
             .tx
             .send(serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string()));
         return Ok(Json(serde_json::json!({
-            "error": "Alert ignored: not relevant to monitored resources"
+            "error": format!(
+                "Alert ignored: prefix {} (ASN: {}) not in monitored resources. \
+                Add it to prefixes.yml to process alerts for this prefix/ASN.",
+                payload.details.prefix,
+                payload.details.asn
+            ),
+            "ignored": true
         })));
     }
+
+    tracing::info!(
+        "Processing alert for prefix {} (ASN: {})",
+        payload.details.prefix,
+        payload.details.asn
+    );
 
     match alert_analyzer::AlertAnalyzer::run(payload.clone(), &state.config, &state.db_pool).await {
         Ok(result) => {

@@ -4,6 +4,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+/// Default maximum tokens for Anthropic API requests
+pub const ANTHROPIC_MAX_TOKENS: u64 = 4096;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct PrefixInfo {
     #[allow(dead_code)]

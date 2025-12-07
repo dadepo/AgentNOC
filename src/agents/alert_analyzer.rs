@@ -1,4 +1,5 @@
 use crate::alerts::http::server::BGPAlerterAlert;
+use crate::config::ANTHROPIC_MAX_TOKENS;
 use crate::mcp_clients::{self, MCPConnection};
 use color_eyre::Result;
 use rig::client::ProviderClient;
@@ -116,7 +117,11 @@ CRITICAL: Output ONLY valid JSON. No markdown code blocks, no extra text."#
     ) -> Result<String> {
         // Handle the case with no MCP connections
         if connections.is_empty() {
-            let agent = client.agent(model_name).preamble(PREAMBLE).build();
+            let agent = client
+                .agent(model_name)
+                .preamble(PREAMBLE)
+                .max_tokens(ANTHROPIC_MAX_TOKENS)
+                .build();
             return Ok(agent.prompt(prompt).multi_turn(3).await?);
         }
 
@@ -129,6 +134,7 @@ CRITICAL: Output ONLY valid JSON. No markdown code blocks, no extra text."#
         let mut agent_builder = client
             .agent(model_name)
             .preamble(PREAMBLE)
+            .max_tokens(ANTHROPIC_MAX_TOKENS)
             .rmcp_tools(first_conn.tools, first_conn.peer);
 
         // Add remaining connections
