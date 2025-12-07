@@ -1,6 +1,7 @@
 use crate::alerts::http::server::BGPAlerterAlert;
 use crate::mcp_clients::{self, MCPConnection};
 use color_eyre::Result;
+use rig::client::ProviderClient;
 use rig::completion::Prompt;
 use rig::prelude::CompletionClient;
 use rig::providers::anthropic;

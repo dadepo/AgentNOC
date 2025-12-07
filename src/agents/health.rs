@@ -1,4 +1,5 @@
 use color_eyre::Result;
+use rig::client::ProviderClient;
 use rig::providers::anthropic;
 use serde::Serialize;
 use sqlx::SqlitePool;
