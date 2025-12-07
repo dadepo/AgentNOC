@@ -41,12 +41,12 @@ pub enum SseEvent {
 #[derive(Clone)]
 pub struct AppState {
     pub tx: broadcast::Sender<String>,
-    pub config: AppConfig,
+    pub config: Arc<AppConfig>,
     pub prefixes_config: PrefixesConfig,
     pub db_pool: Arc<SqlitePool>,
 }
 
-pub async fn start(tx: broadcast::Sender<String>, config: AppConfig) -> Result<()> {
+pub async fn start(tx: broadcast::Sender<String>, config: Arc<AppConfig>) -> Result<()> {
     // Initialize database
     let db_pool = db::init_database().await?;
 
@@ -882,10 +882,10 @@ mod tests {
         .unwrap();
 
         let (tx, _) = broadcast::channel(100);
-        let config = AppConfig {
+        let config = Arc::new(AppConfig {
             server_port: 7654,
             llm_model_name: "test-model".to_string(),
-        };
+        });
         let prefixes_config = PrefixesConfig::load("prefixes.test.yml").unwrap();
 
         AppState {
