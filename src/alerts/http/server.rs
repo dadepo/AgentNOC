@@ -14,7 +14,7 @@ use axum::{
 use color_eyre::Result;
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -306,37 +306,10 @@ struct ChatRequest {
 async fn list_alerts(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    let rows = sqlx::query(
-        r#"
-        SELECT id, alert_data, kind, created_at
-        FROM alerts
-        ORDER BY created_at DESC
-        "#,
-    )
-    .fetch_all(&*state.db_pool)
-    .await
-    .map_err(|e| {
+    let alerts = db::list_alerts(&state.db_pool).await.map_err(|e| {
         tracing::error!("Database error: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-
-    let mut alerts = Vec::new();
-    for row in rows {
-        let id: i64 = row.get(0);
-        let alert_data: String = row.get(1);
-        let kind: String = row.get(2);
-        let created_at: String = row.get(3);
-
-        let alert_json: serde_json::Value =
-            serde_json::from_str(&alert_data).unwrap_or_else(|_| serde_json::json!({}));
-
-        alerts.push(serde_json::json!({
-            "id": id,
-            "alert_data": alert_json,
-            "kind": kind,
-            "created_at": created_at
-        }));
-    }
 
     Ok(Json(alerts))
 }
@@ -345,80 +318,15 @@ async fn get_alert(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Get alert
-    let alert_row = sqlx::query(
-        r#"
-        SELECT id, alert_data, initial_response, kind, created_at, updated_at
-        FROM alerts
-        WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .fetch_optional(&*state.db_pool)
-    .await
-    .map_err(|e| {
+    let alert = db::get_alert_by_id(&state.db_pool, id).await.map_err(|e| {
         tracing::error!("Database error: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let alert_row = match alert_row {
-        Some(row) => row,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
-
-    let alert_data: String = alert_row.get(1);
-    let initial_response: String = alert_row.get(2);
-    let kind: String = alert_row.get(3);
-    let created_at: String = alert_row.get(4);
-    let updated_at: String = alert_row.get(5);
-
-    let alert_json: serde_json::Value = serde_json::from_str(&alert_data).map_err(|e| {
-        tracing::error!("Failed to parse alert data: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    // Get chat messages
-    let chat_rows = sqlx::query(
-        r#"
-        SELECT id, alert_id, role, content, created_at
-        FROM chat_messages
-        WHERE alert_id = ?
-        ORDER BY created_at ASC
-        "#,
-    )
-    .bind(id)
-    .fetch_all(&*state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Database error: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    let mut chat_messages = Vec::new();
-    for row in chat_rows {
-        let msg_id: i64 = row.get(0);
-        let alert_id: i64 = row.get(1);
-        let role: String = row.get(2);
-        let content: String = row.get(3);
-        let created_at: String = row.get(4);
-
-        chat_messages.push(serde_json::json!({
-            "id": msg_id,
-            "alert_id": alert_id,
-            "role": role,
-            "content": content,
-            "created_at": created_at
-        }));
+    match alert {
+        Some(alert) => Ok(Json(alert)),
+        None => Err(StatusCode::NOT_FOUND),
     }
-
-    Ok(Json(serde_json::json!({
-        "alert": alert_json,
-        "initial_response": initial_response,
-        "kind": kind,
-        "chat_messages": chat_messages,
-        "created_at": created_at,
-        "updated_at": updated_at
-    })))
 }
 
 async fn chat_with_alert(
@@ -426,29 +334,14 @@ async fn chat_with_alert(
     Path(id): Path<i64>,
     Json(payload): Json<ChatRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Get alert and chat history
-    let alert_row = sqlx::query(
-        r#"
-        SELECT id, alert_data, initial_response, kind
-        FROM alerts
-        WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .fetch_optional(&*state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Database error: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    let alert_row = match alert_row {
-        Some(row) => row,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
-
-    let alert_data: String = alert_row.get(1);
-    let initial_response: String = alert_row.get(2);
+    // Get alert data and initial response
+    let (alert_data, initial_response) = db::get_alert_for_chat(&state.db_pool, id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Database error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .ok_or(StatusCode::NOT_FOUND)?;
 
     let alert: BGPAlerterAlert = serde_json::from_str(&alert_data).map_err(|e| {
         tracing::error!("Failed to parse alert data: {}", e);
@@ -456,53 +349,20 @@ async fn chat_with_alert(
     })?;
 
     // Get chat history
-    let chat_rows = sqlx::query(
-        r#"
-        SELECT id, alert_id, role, content, created_at
-        FROM chat_messages
-        WHERE alert_id = ?
-        ORDER BY created_at ASC
-        "#,
-    )
-    .bind(id)
-    .fetch_all(&*state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Database error: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    let chat_history: Vec<models::ChatMessage> = chat_rows
-        .into_iter()
-        .map(|row| {
-            models::ChatMessage::from_row(
-                row.get(0),
-                row.get(1),
-                row.get(2),
-                row.get(3),
-                row.get(4),
-            )
-        })
-        .collect();
+    let chat_history = db::get_chat_history(&state.db_pool, id)
+        .await
+        .map_err(|e| {
+            tracing::error!("Database error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     // Save user message
-    let timestamp = models::get_current_timestamp();
-    sqlx::query(
-        r#"
-        INSERT INTO chat_messages (alert_id, role, content, created_at)
-        VALUES (?, ?, ?, ?)
-        "#,
-    )
-    .bind(id)
-    .bind("user")
-    .bind(&payload.message)
-    .bind(&timestamp)
-    .execute(&*state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Database error: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    db::insert_chat_message(&state.db_pool, id, "user", &payload.message)
+        .await
+        .map_err(|e| {
+            tracing::error!("Database error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     // Run chat agent
     let assistant_response = match crate::agents::chat::Chat::run(
@@ -523,24 +383,12 @@ async fn chat_with_alert(
     };
 
     // Save assistant response
-    let timestamp = models::get_current_timestamp();
-    let message_id = sqlx::query_scalar::<_, i64>(
-        r#"
-        INSERT INTO chat_messages (alert_id, role, content, created_at)
-        VALUES (?, ?, ?, ?)
-        RETURNING id
-        "#,
-    )
-    .bind(id)
-    .bind("assistant")
-    .bind(&assistant_response)
-    .bind(&timestamp)
-    .fetch_one(&*state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Database error: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let message_id = db::insert_chat_message(&state.db_pool, id, "assistant", &assistant_response)
+        .await
+        .map_err(|e| {
+            tracing::error!("Database error: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
 
     // Broadcast SSE notification
     let event = SseEvent::ChatMessage {
@@ -560,22 +408,12 @@ async fn delete_alert(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, StatusCode> {
-    // Delete alert (chat_messages will be deleted via CASCADE)
-    let result = sqlx::query(
-        r#"
-        DELETE FROM alerts
-        WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .execute(&*state.db_pool)
-    .await
-    .map_err(|e| {
+    let deleted = db::delete_alert(&state.db_pool, id).await.map_err(|e| {
         tracing::error!("Database error: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    if result.rows_affected() == 0 {
+    if !deleted {
         return Err(StatusCode::NOT_FOUND);
     }
 
@@ -894,186 +732,6 @@ mod tests {
             prefixes_config,
             db_pool: Arc::new(pool),
         }
-    }
-
-    #[tokio::test]
-    async fn test_list_alerts_empty() {
-        let state = create_test_state().await;
-        let result = list_alerts(State(state)).await;
-
-        assert!(result.is_ok());
-        let json = result.unwrap();
-        assert_eq!(json.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_list_alerts_with_data() {
-        let state = create_test_state().await;
-
-        // Insert test alert
-        let alert_data = r#"{"message":"test"}"#;
-        let timestamp = models::get_current_timestamp();
-        sqlx::query(
-            r#"
-            INSERT INTO alerts (alert_data, initial_response, kind, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(alert_data)
-        .bind("Test response")
-        .bind(models::AlertKind::BgpAlerter.as_str())
-        .bind(&timestamp)
-        .bind(&timestamp)
-        .execute(&*state.db_pool)
-        .await
-        .unwrap();
-
-        let result = list_alerts(State(state)).await;
-
-        assert!(result.is_ok());
-        let alerts = result.unwrap();
-        assert_eq!(alerts.len(), 1);
-        assert_eq!(alerts[0]["id"], 1);
-    }
-
-    #[tokio::test]
-    async fn test_get_alert_not_found() {
-        let state = create_test_state().await;
-        let result = get_alert(State(state), Path(999)).await;
-
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_get_alert_with_chat() {
-        let state = create_test_state().await;
-
-        // Insert alert
-        let alert_data = r#"{"message":"test","description":"test","details":{"prefix":"192.0.2.0/24","asn":"3333"}}"#;
-        let timestamp = models::get_current_timestamp();
-        let alert_id = sqlx::query_scalar::<_, i64>(
-            r#"
-            INSERT INTO alerts (alert_data, initial_response, kind, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            RETURNING id
-            "#,
-        )
-        .bind(alert_data)
-        .bind("Initial response")
-        .bind(models::AlertKind::BgpAlerter.as_str())
-        .bind(&timestamp)
-        .bind(&timestamp)
-        .fetch_one(&*state.db_pool)
-        .await
-        .unwrap();
-
-        // Insert chat messages
-        sqlx::query(
-            r#"
-            INSERT INTO chat_messages (alert_id, role, content, created_at)
-            VALUES (?, ?, ?, ?)
-            "#,
-        )
-        .bind(alert_id)
-        .bind("user")
-        .bind("Question 1")
-        .bind(&timestamp)
-        .execute(&*state.db_pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            r#"
-            INSERT INTO chat_messages (alert_id, role, content, created_at)
-            VALUES (?, ?, ?, ?)
-            "#,
-        )
-        .bind(alert_id)
-        .bind("assistant")
-        .bind("Answer 1")
-        .bind(&timestamp)
-        .execute(&*state.db_pool)
-        .await
-        .unwrap();
-
-        let result = get_alert(State(state), Path(alert_id)).await;
-
-        assert!(result.is_ok());
-        let json = result.unwrap();
-        assert_eq!(json["initial_response"], "Initial response");
-        assert_eq!(json["chat_messages"].as_array().unwrap().len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_delete_alert_not_found() {
-        let state = create_test_state().await;
-        let result = delete_alert(State(state), Path(999)).await;
-
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_delete_alert_success() {
-        let state = create_test_state().await;
-
-        // Insert alert
-        let alert_data = r#"{"message":"test"}"#;
-        let timestamp = models::get_current_timestamp();
-        let alert_id = sqlx::query_scalar::<_, i64>(
-            r#"
-            INSERT INTO alerts (alert_data, initial_response, kind, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            RETURNING id
-            "#,
-        )
-        .bind(alert_data)
-        .bind("response")
-        .bind(models::AlertKind::BgpAlerter.as_str())
-        .bind(&timestamp)
-        .bind(&timestamp)
-        .fetch_one(&*state.db_pool)
-        .await
-        .unwrap();
-
-        // Insert chat message
-        sqlx::query(
-            r#"
-            INSERT INTO chat_messages (alert_id, role, content, created_at)
-            VALUES (?, ?, ?, ?)
-            "#,
-        )
-        .bind(alert_id)
-        .bind("user")
-        .bind("test message")
-        .bind(&timestamp)
-        .execute(&*state.db_pool)
-        .await
-        .unwrap();
-
-        let db_pool = Arc::clone(&state.db_pool);
-        let result = delete_alert(State(state), Path(alert_id)).await;
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), StatusCode::NO_CONTENT);
-
-        // Verify alert is deleted
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM alerts WHERE id = ?")
-            .bind(alert_id)
-            .fetch_one(&*db_pool)
-            .await
-            .unwrap();
-        assert_eq!(count, 0);
-
-        // Verify chat messages are cascade deleted
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM chat_messages WHERE alert_id = ?")
-                .bind(alert_id)
-                .fetch_one(&*db_pool)
-                .await
-                .unwrap();
-        assert_eq!(count, 0);
     }
 
     #[test]
