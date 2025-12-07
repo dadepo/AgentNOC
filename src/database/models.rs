@@ -2,6 +2,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 
 /// Common metadata for all MCP servers
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,11 +189,37 @@ pub struct UpdateMcpServer {
     pub enabled: Option<bool>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AlertKind {
+    BgpAlerter,
+}
+
+impl AlertKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AlertKind::BgpAlerter => "bgp_alerter",
+        }
+    }
+}
+
+impl TryFrom<&str> for AlertKind {
+    type Error = String;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "bgp_alerter" => Ok(AlertKind::BgpAlerter),
+            _ => Err(format!("Unknown alert kind: {}", s)),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Alert {
     pub id: i64,
     pub alert_data: Value,
     pub initial_response: String,
+    pub kind: AlertKind,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -212,14 +239,20 @@ impl Alert {
         id: i64,
         alert_data: String,
         initial_response: String,
+        kind: String,
         created_at: String,
         updated_at: String,
     ) -> Result<Self, serde_json::Error> {
         let alert_data: Value = serde_json::from_str(&alert_data)?;
+        let kind = AlertKind::try_from(kind.as_str()).map_err(|_e: String| {
+            // Create a serde_json error by parsing invalid JSON
+            serde_json::from_str::<Value>("invalid").unwrap_err()
+        })?;
         Ok(Alert {
             id,
             alert_data,
             initial_response,
+            kind,
             created_at,
             updated_at,
         })
@@ -556,6 +589,7 @@ mod tests {
             1,
             alert_data.to_string(),
             initial_response.to_string(),
+            "bgp_alerter".to_string(),
             created_at.to_string(),
             updated_at.to_string(),
         )
@@ -563,6 +597,7 @@ mod tests {
 
         assert_eq!(alert.id, 1);
         assert_eq!(alert.initial_response, initial_response);
+        assert_eq!(alert.kind, AlertKind::BgpAlerter);
         assert_eq!(alert.created_at, created_at);
         assert_eq!(alert.updated_at, updated_at);
         assert!(alert.alert_data.is_object());
@@ -574,6 +609,7 @@ mod tests {
             1,
             "invalid json".to_string(),
             "response".to_string(),
+            AlertKind::BgpAlerter.as_str().to_string(),
             "2025-01-15T10:30:00Z".to_string(),
             "2025-01-15T10:30:00Z".to_string(),
         );

@@ -27,6 +27,7 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             alert_data TEXT NOT NULL,
             initial_response TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'bgp_alerter',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -77,6 +78,16 @@ async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     sqlx::query(
         r#"
         ALTER TABLE mcp_servers ADD COLUMN is_native INTEGER NOT NULL DEFAULT 0
+        "#,
+    )
+    .execute(pool)
+    .await
+    .ok(); // Ignore error if column already exists
+
+    // Migration: Add kind column if it doesn't exist (for existing databases)
+    sqlx::query(
+        r#"
+        ALTER TABLE alerts ADD COLUMN kind TEXT NOT NULL DEFAULT 'bgp_alerter'
         "#,
     )
     .execute(pool)
@@ -552,6 +563,7 @@ pub async fn enable_native_mcp_servers(pool: &SqlitePool, enabled: bool) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::models::AlertKind;
     use sqlx::Row;
 
     async fn create_test_db() -> Result<SqlitePool> {
@@ -859,13 +871,14 @@ mod tests {
 
         let id = sqlx::query_scalar::<_, i64>(
             r#"
-            INSERT INTO alerts (alert_data, initial_response, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO alerts (alert_data, initial_response, kind, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             RETURNING id
             "#,
         )
         .bind(alert_data)
         .bind(response)
+        .bind(AlertKind::BgpAlerter.as_str())
         .bind(timestamp)
         .bind(timestamp)
         .fetch_one(&pool)
@@ -875,15 +888,17 @@ mod tests {
         assert_eq!(id, 1);
 
         // Verify we can retrieve it
-        let row = sqlx::query("SELECT id, alert_data, initial_response FROM alerts WHERE id = ?")
-            .bind(id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let row =
+            sqlx::query("SELECT id, alert_data, initial_response, kind FROM alerts WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
 
         assert_eq!(row.get::<i64, _>(0), id);
         assert_eq!(row.get::<String, _>(1), alert_data);
         assert_eq!(row.get::<String, _>(2), response);
+        assert_eq!(row.get::<String, _>(3), AlertKind::BgpAlerter.as_str());
     }
 
     #[tokio::test]
@@ -893,13 +908,14 @@ mod tests {
         // First create an alert
         let alert_id = sqlx::query_scalar::<_, i64>(
             r#"
-            INSERT INTO alerts (alert_data, initial_response, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO alerts (alert_data, initial_response, kind, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             RETURNING id
             "#,
         )
         .bind(r#"{"message":"test"}"#)
         .bind("response")
+        .bind(AlertKind::BgpAlerter.as_str())
         .bind("2025-01-15T10:30:00Z")
         .bind("2025-01-15T10:30:00Z")
         .fetch_one(&pool)
@@ -943,13 +959,14 @@ mod tests {
         // Create alert
         let alert_id = sqlx::query_scalar::<_, i64>(
             r#"
-            INSERT INTO alerts (alert_data, initial_response, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO alerts (alert_data, initial_response, kind, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             RETURNING id
             "#,
         )
         .bind(r#"{"message":"test"}"#)
         .bind("response")
+        .bind(AlertKind::BgpAlerter.as_str())
         .bind("2025-01-15T10:30:00Z")
         .bind("2025-01-15T10:30:00Z")
         .fetch_one(&pool)
