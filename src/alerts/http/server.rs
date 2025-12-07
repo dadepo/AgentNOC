@@ -1,27 +1,20 @@
-use crate::agents::{alert_analyzer, health};
-use crate::database::{db, models};
-use crate::mcp_clients;
+use crate::database::db;
 use axum::body::Body;
 use axum::{
-    Json, Router,
-    extract::State,
-    extract::{Path, Query},
+    Router,
     http::{StatusCode, Uri},
-    response::sse::{Event, Sse},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
 use color_eyre::Result;
-use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
-use std::convert::Infallible;
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::broadcast;
-use tokio_stream::StreamExt as _;
-use tokio_stream::wrappers::BroadcastStream;
 
 use crate::config::{AppConfig, PrefixesConfig};
+
+use super::routes;
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type")]
@@ -41,12 +34,12 @@ pub enum SseEvent {
 #[derive(Clone)]
 pub struct AppState {
     pub tx: broadcast::Sender<String>,
-    pub config: AppConfig,
+    pub config: Arc<AppConfig>,
     pub prefixes_config: PrefixesConfig,
     pub db_pool: Arc<SqlitePool>,
 }
 
-pub async fn start(tx: broadcast::Sender<String>, config: AppConfig) -> Result<()> {
+pub async fn start(tx: broadcast::Sender<String>, config: Arc<AppConfig>) -> Result<()> {
     // Initialize database
     let db_pool = db::init_database().await?;
 
@@ -65,21 +58,36 @@ pub async fn start(tx: broadcast::Sender<String>, config: AppConfig) -> Result<(
     // build our application with routes
     // API routes must come before static file serving
     let app = Router::new()
-        .route("/api/messages/stream", get(message_stream))
-        .route("/api/health", get(health_check))
-        .route("/api/alerts", get(list_alerts).post(process_alert))
-        .route("/api/alerts/{id}", get(get_alert).delete(delete_alert))
-        .route("/api/alerts/{id}/chat", post(chat_with_alert))
+        .route("/api/messages/stream", get(routes::message_stream))
+        .route("/api/health", get(routes::health_check))
+        .route(
+            "/api/alerts",
+            get(routes::alerts::list_alerts).post(routes::alerts::process_alert),
+        )
+        .route(
+            "/api/alerts/{id}",
+            get(routes::alerts::get_alert).delete(routes::alerts::delete_alert),
+        )
+        .route(
+            "/api/alerts/{id}/chat",
+            post(routes::alerts::chat_with_alert),
+        )
         // MCP server management routes
-        .route("/api/mcps", get(list_mcp_servers).post(create_mcp_server))
+        .route(
+            "/api/mcps",
+            get(routes::mcp::list_mcp_servers).post(routes::mcp::create_mcp_server),
+        )
         .route(
             "/api/mcps/{id}",
-            get(get_mcp_server)
-                .put(update_mcp_server)
-                .delete(delete_mcp_server),
+            get(routes::mcp::get_mcp_server)
+                .put(routes::mcp::update_mcp_server)
+                .delete(routes::mcp::delete_mcp_server),
         )
-        .route("/api/mcps/{id}/test", post(test_mcp_server))
-        .route("/api/mcps/enable-native", post(enable_native_mcp_servers))
+        .route("/api/mcps/{id}/test", post(routes::mcp::test_mcp_server))
+        .route(
+            "/api/mcps/enable-native",
+            post(routes::mcp::enable_native_mcp_servers),
+        )
         // Serve static files as fallback (must be last)
         // For SPA routing, serve index.html for all non-API routes
         .fallback(serve_spa)
@@ -151,51 +159,6 @@ async fn serve_spa(uri: Uri) -> Response {
     }
 }
 
-async fn message_stream(
-    State(state): State<AppState>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let rx = state.tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(|msg| match msg {
-        Ok(msg) => Some(Ok(Event::default().data(msg))),
-        Err(_) => None,
-    });
-
-    Sse::new(stream).keep_alive(
-        axum::response::sse::KeepAlive::new()
-            .interval(std::time::Duration::from_secs(15))
-            .text("keep-alive-text"),
-    )
-}
-
-async fn health_check(
-    State(state): State<AppState>,
-) -> Result<Json<health::HealthStatus>, StatusCode> {
-    match health::run(&state.config, &state.db_pool).await {
-        Ok(status) => {
-            // Broadcast health status to web clients
-            let status_json =
-                serde_json::to_string(&status).unwrap_or_else(|_| "unknown".to_string());
-            let event = SseEvent::HealthCheck {
-                status: status_json,
-            };
-            let _ = state
-                .tx
-                .send(serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string()));
-            Ok(Json(status))
-        }
-        Err(e) => {
-            let event = SseEvent::Error {
-                message: format!("Health check error: {e}"),
-            };
-            let _ = state
-                .tx
-                .send(serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string()));
-            tracing::error!("Health check failed: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct BGPAlerterAlert {
     pub message: String,
@@ -219,590 +182,13 @@ pub struct Details {
     pub peers: String,
 }
 
-async fn process_alert(
-    State(state): State<AppState>,
-    Json(payload): Json<BGPAlerterAlert>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    tracing::debug!("Received alert: {:#?}", payload);
-
-    // Check if alert is relevant to our monitored resources
-    if !state.prefixes_config.is_alert_relevant(&payload) {
-        tracing::debug!(
-            "Alert for prefix {} (ASN: {}) is not relevant to monitored resources, skipping",
-            payload.details.prefix,
-            payload.details.asn
-        );
-        let event = SseEvent::Error {
-            message: format!(
-                "Alert ignored: prefix {} not in monitored resources",
-                payload.details.prefix
-            ),
-        };
-        let _ = state
-            .tx
-            .send(serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string()));
-        return Ok(Json(serde_json::json!({
-            "error": "Alert ignored: not relevant to monitored resources"
-        })));
-    }
-
-    match alert_analyzer::AlertAnalyzer::run(payload.clone(), &state.config, &state.db_pool).await {
-        Ok(result) => {
-            // Save alert and initial response to database
-            let alert_data_json = serde_json::to_string(&payload).map_err(|e| {
-                tracing::error!("Failed to serialize alert: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
-
-            let timestamp = models::get_current_timestamp();
-
-            let alert_id = sqlx::query_scalar::<_, i64>(
-                r#"
-                INSERT INTO alerts (alert_data, initial_response, kind, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-                RETURNING id
-                "#,
-            )
-            .bind(&alert_data_json)
-            .bind(&result)
-            .bind(models::AlertKind::BgpAlerter.as_str())
-            .bind(&timestamp)
-            .bind(&timestamp)
-            .fetch_one(&*state.db_pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Database error: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
-
-            // Broadcast SSE notification
-            let event = SseEvent::NewAlert { alert_id };
-            let event_json = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
-            let _ = state.tx.send(event_json);
-
-            Ok(Json(serde_json::json!({
-                "alert_id": alert_id,
-                "response": result
-            })))
-        }
-        Err(e) => {
-            let event = SseEvent::Error {
-                message: format!("Alert Analysis Agent error: {e}"),
-            };
-            let _ = state
-                .tx
-                .send(serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string()));
-            tracing::error!("Alert processing failed: {}", e);
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct ChatRequest {
-    message: String,
-}
-
-async fn list_alerts(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
-    let rows = sqlx::query(
-        r#"
-        SELECT id, alert_data, kind, created_at
-        FROM alerts
-        ORDER BY created_at DESC
-        "#,
-    )
-    .fetch_all(&*state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Database error: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    let mut alerts = Vec::new();
-    for row in rows {
-        let id: i64 = row.get(0);
-        let alert_data: String = row.get(1);
-        let kind: String = row.get(2);
-        let created_at: String = row.get(3);
-
-        let alert_json: serde_json::Value =
-            serde_json::from_str(&alert_data).unwrap_or_else(|_| serde_json::json!({}));
-
-        alerts.push(serde_json::json!({
-            "id": id,
-            "alert_data": alert_json,
-            "kind": kind,
-            "created_at": created_at
-        }));
-    }
-
-    Ok(Json(alerts))
-}
-
-async fn get_alert(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Get alert
-    let alert_row = sqlx::query(
-        r#"
-        SELECT id, alert_data, initial_response, kind, created_at, updated_at
-        FROM alerts
-        WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .fetch_optional(&*state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Database error: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    let alert_row = match alert_row {
-        Some(row) => row,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
-
-    let alert_data: String = alert_row.get(1);
-    let initial_response: String = alert_row.get(2);
-    let kind: String = alert_row.get(3);
-    let created_at: String = alert_row.get(4);
-    let updated_at: String = alert_row.get(5);
-
-    let alert_json: serde_json::Value = serde_json::from_str(&alert_data).map_err(|e| {
-        tracing::error!("Failed to parse alert data: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    // Get chat messages
-    let chat_rows = sqlx::query(
-        r#"
-        SELECT id, alert_id, role, content, created_at
-        FROM chat_messages
-        WHERE alert_id = ?
-        ORDER BY created_at ASC
-        "#,
-    )
-    .bind(id)
-    .fetch_all(&*state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Database error: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    let mut chat_messages = Vec::new();
-    for row in chat_rows {
-        let msg_id: i64 = row.get(0);
-        let alert_id: i64 = row.get(1);
-        let role: String = row.get(2);
-        let content: String = row.get(3);
-        let created_at: String = row.get(4);
-
-        chat_messages.push(serde_json::json!({
-            "id": msg_id,
-            "alert_id": alert_id,
-            "role": role,
-            "content": content,
-            "created_at": created_at
-        }));
-    }
-
-    Ok(Json(serde_json::json!({
-        "alert": alert_json,
-        "initial_response": initial_response,
-        "kind": kind,
-        "chat_messages": chat_messages,
-        "created_at": created_at,
-        "updated_at": updated_at
-    })))
-}
-
-async fn chat_with_alert(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-    Json(payload): Json<ChatRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Get alert and chat history
-    let alert_row = sqlx::query(
-        r#"
-        SELECT id, alert_data, initial_response, kind
-        FROM alerts
-        WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .fetch_optional(&*state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Database error: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    let alert_row = match alert_row {
-        Some(row) => row,
-        None => return Err(StatusCode::NOT_FOUND),
-    };
-
-    let alert_data: String = alert_row.get(1);
-    let initial_response: String = alert_row.get(2);
-
-    let alert: BGPAlerterAlert = serde_json::from_str(&alert_data).map_err(|e| {
-        tracing::error!("Failed to parse alert data: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    // Get chat history
-    let chat_rows = sqlx::query(
-        r#"
-        SELECT id, alert_id, role, content, created_at
-        FROM chat_messages
-        WHERE alert_id = ?
-        ORDER BY created_at ASC
-        "#,
-    )
-    .bind(id)
-    .fetch_all(&*state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Database error: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    let chat_history: Vec<models::ChatMessage> = chat_rows
-        .into_iter()
-        .map(|row| {
-            models::ChatMessage::from_row(
-                row.get(0),
-                row.get(1),
-                row.get(2),
-                row.get(3),
-                row.get(4),
-            )
-        })
-        .collect();
-
-    // Save user message
-    let timestamp = models::get_current_timestamp();
-    sqlx::query(
-        r#"
-        INSERT INTO chat_messages (alert_id, role, content, created_at)
-        VALUES (?, ?, ?, ?)
-        "#,
-    )
-    .bind(id)
-    .bind("user")
-    .bind(&payload.message)
-    .bind(&timestamp)
-    .execute(&*state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Database error: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    // Run chat agent
-    let assistant_response = match crate::agents::chat::Chat::run(
-        alert,
-        &initial_response,
-        &chat_history,
-        &payload.message,
-        &state.config,
-        &state.db_pool,
-    )
-    .await
-    {
-        Ok(response) => response,
-        Err(e) => {
-            tracing::error!("Chat agent error: {}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    };
-
-    // Save assistant response
-    let timestamp = models::get_current_timestamp();
-    let message_id = sqlx::query_scalar::<_, i64>(
-        r#"
-        INSERT INTO chat_messages (alert_id, role, content, created_at)
-        VALUES (?, ?, ?, ?)
-        RETURNING id
-        "#,
-    )
-    .bind(id)
-    .bind("assistant")
-    .bind(&assistant_response)
-    .bind(&timestamp)
-    .fetch_one(&*state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Database error: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    // Broadcast SSE notification
-    let event = SseEvent::ChatMessage {
-        alert_id: id,
-        message_id,
-    };
-    let event_json = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
-    let _ = state.tx.send(event_json);
-
-    Ok(Json(serde_json::json!({
-        "response": assistant_response,
-        "message_id": message_id
-    })))
-}
-
-async fn delete_alert(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<StatusCode, StatusCode> {
-    // Delete alert (chat_messages will be deleted via CASCADE)
-    let result = sqlx::query(
-        r#"
-        DELETE FROM alerts
-        WHERE id = ?
-        "#,
-    )
-    .bind(id)
-    .execute(&*state.db_pool)
-    .await
-    .map_err(|e| {
-        tracing::error!("Database error: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-
-    if result.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
-    }
-
-    // Broadcast SSE notification
-    let event = SseEvent::AlertDeleted { alert_id: id };
-    let event_json = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
-    let _ = state.tx.send(event_json);
-
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// List all MCP servers
-#[derive(Deserialize)]
-struct ListMcpServersQuery {
-    kind: Option<String>,
-}
-
-async fn list_mcp_servers(
-    State(state): State<AppState>,
-    Query(query): Query<ListMcpServersQuery>,
-) -> Result<Json<Vec<models::McpServer>>, StatusCode> {
-    let kind = query.kind.as_deref();
-    let servers = db::get_all_mcp_servers(&state.db_pool, kind)
-        .await
-        .map_err(|e| {
-            tracing::error!("Database error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-    Ok(Json(servers))
-}
-
-/// Get a single MCP server by ID
-async fn get_mcp_server(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<Json<models::McpServer>, StatusCode> {
-    let server = db::get_mcp_server_by_id(&state.db_pool, id)
-        .await
-        .map_err(|e| {
-            tracing::error!("Database error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-    match server {
-        Some(s) => Ok(Json(s)),
-        None => Err(StatusCode::NOT_FOUND),
-    }
-}
-
-/// Create a new MCP server
-async fn create_mcp_server(
-    State(state): State<AppState>,
-    Json(payload): Json<models::CreateMcpServer>,
-) -> Result<(StatusCode, Json<models::McpServer>), (StatusCode, Json<serde_json::Value>)> {
-    // Validate the payload
-    if let Err(e) = payload.validate() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": e })),
-        ));
-    }
-
-    let server = db::create_mcp_server(&state.db_pool, &payload)
-        .await
-        .map_err(|e| {
-            tracing::error!("Database error: {}", e);
-            // Check if it's a unique constraint violation
-            let error_msg = e.to_string();
-            if error_msg.contains("UNIQUE constraint") {
-                (
-                    StatusCode::CONFLICT,
-                    Json(serde_json::json!({ "error": "A server with this name already exists" })),
-                )
-            } else {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": "Failed to create server" })),
-                )
-            }
-        })?;
-
-    Ok((StatusCode::CREATED, Json(server)))
-}
-
-/// Update an existing MCP server
-async fn update_mcp_server(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-    Json(payload): Json<models::UpdateMcpServer>,
-) -> Result<Json<models::McpServer>, (StatusCode, Json<serde_json::Value>)> {
-    let server = db::update_mcp_server(&state.db_pool, id, &payload)
-        .await
-        .map_err(|e| {
-            tracing::error!("Database error: {}", e);
-            let error_msg = e.to_string();
-            if error_msg.contains("UNIQUE constraint") {
-                (
-                    StatusCode::CONFLICT,
-                    Json(serde_json::json!({ "error": "A server with this name already exists" })),
-                )
-            } else {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(serde_json::json!({ "error": "Failed to update server" })),
-                )
-            }
-        })?;
-
-    match server {
-        Some(s) => Ok(Json(s)),
-        None => Err((
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({ "error": "Server not found" })),
-        )),
-    }
-}
-
-/// Delete an MCP server
-async fn delete_mcp_server(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<StatusCode, StatusCode> {
-    let deleted = db::delete_mcp_server(&state.db_pool, id)
-        .await
-        .map_err(|e| {
-            tracing::error!("Database error: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
-    if deleted {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(StatusCode::NOT_FOUND)
-    }
-}
-
-/// Test connection response
-#[derive(Serialize)]
-struct TestConnectionResponse {
-    success: bool,
-    tool_count: Option<usize>,
-    error: Option<String>,
-}
-
-/// Test connection to an MCP server
-async fn test_mcp_server(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<Json<TestConnectionResponse>, (StatusCode, Json<TestConnectionResponse>)> {
-    // First get the server
-    let server = db::get_mcp_server_by_id(&state.db_pool, id)
-        .await
-        .map_err(|e| {
-            tracing::error!("Database error: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(TestConnectionResponse {
-                    success: false,
-                    tool_count: None,
-                    error: Some("Database error".to_string()),
-                }),
-            )
-        })?;
-
-    let server = match server {
-        Some(s) => s,
-        None => {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(TestConnectionResponse {
-                    success: false,
-                    tool_count: None,
-                    error: Some("Server not found".to_string()),
-                }),
-            ));
-        }
-    };
-
-    // Try to connect
-    match mcp_clients::test_connection(&server).await {
-        Ok(tool_count) => Ok(Json(TestConnectionResponse {
-            success: true,
-            tool_count: Some(tool_count),
-            error: None,
-        })),
-        Err(e) => {
-            tracing::warn!(
-                "Connection test failed for server {}: {:?}",
-                server.name(),
-                e
-            );
-            Ok(Json(TestConnectionResponse {
-                success: false,
-                tool_count: None,
-                error: Some(e.to_string()),
-            }))
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct EnableNativeRequest {
-    enabled: bool,
-}
-
-/// Enable or disable native MCP servers
-async fn enable_native_mcp_servers(
-    State(state): State<AppState>,
-    Json(payload): Json<EnableNativeRequest>,
-) -> Result<StatusCode, (StatusCode, Json<serde_json::Value>)> {
-    db::enable_native_mcp_servers(&state.db_pool, payload.enabled)
-        .await
-        .map_err(|e| {
-            tracing::error!("Database error: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": "Failed to enable/disable native MCP servers" })),
-            )
-        })?;
-
-    Ok(StatusCode::NO_CONTENT)
-}
-
 #[cfg(test)]
 mod tests {
+    use super::routes;
     use super::*;
+    use crate::database::models;
+    use axum::extract::{Path, Query, State};
+    use axum::{Json, http::StatusCode};
 
     async fn create_test_state() -> AppState {
         // Create in-memory database
@@ -882,10 +268,10 @@ mod tests {
         .unwrap();
 
         let (tx, _) = broadcast::channel(100);
-        let config = AppConfig {
+        let config = Arc::new(AppConfig {
             server_port: 7654,
             llm_model_name: "test-model".to_string(),
-        };
+        });
         let prefixes_config = PrefixesConfig::load("prefixes.test.yml").unwrap();
 
         AppState {
@@ -894,186 +280,6 @@ mod tests {
             prefixes_config,
             db_pool: Arc::new(pool),
         }
-    }
-
-    #[tokio::test]
-    async fn test_list_alerts_empty() {
-        let state = create_test_state().await;
-        let result = list_alerts(State(state)).await;
-
-        assert!(result.is_ok());
-        let json = result.unwrap();
-        assert_eq!(json.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_list_alerts_with_data() {
-        let state = create_test_state().await;
-
-        // Insert test alert
-        let alert_data = r#"{"message":"test"}"#;
-        let timestamp = models::get_current_timestamp();
-        sqlx::query(
-            r#"
-            INSERT INTO alerts (alert_data, initial_response, kind, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(alert_data)
-        .bind("Test response")
-        .bind(models::AlertKind::BgpAlerter.as_str())
-        .bind(&timestamp)
-        .bind(&timestamp)
-        .execute(&*state.db_pool)
-        .await
-        .unwrap();
-
-        let result = list_alerts(State(state)).await;
-
-        assert!(result.is_ok());
-        let alerts = result.unwrap();
-        assert_eq!(alerts.len(), 1);
-        assert_eq!(alerts[0]["id"], 1);
-    }
-
-    #[tokio::test]
-    async fn test_get_alert_not_found() {
-        let state = create_test_state().await;
-        let result = get_alert(State(state), Path(999)).await;
-
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_get_alert_with_chat() {
-        let state = create_test_state().await;
-
-        // Insert alert
-        let alert_data = r#"{"message":"test","description":"test","details":{"prefix":"192.0.2.0/24","asn":"3333"}}"#;
-        let timestamp = models::get_current_timestamp();
-        let alert_id = sqlx::query_scalar::<_, i64>(
-            r#"
-            INSERT INTO alerts (alert_data, initial_response, kind, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            RETURNING id
-            "#,
-        )
-        .bind(alert_data)
-        .bind("Initial response")
-        .bind(models::AlertKind::BgpAlerter.as_str())
-        .bind(&timestamp)
-        .bind(&timestamp)
-        .fetch_one(&*state.db_pool)
-        .await
-        .unwrap();
-
-        // Insert chat messages
-        sqlx::query(
-            r#"
-            INSERT INTO chat_messages (alert_id, role, content, created_at)
-            VALUES (?, ?, ?, ?)
-            "#,
-        )
-        .bind(alert_id)
-        .bind("user")
-        .bind("Question 1")
-        .bind(&timestamp)
-        .execute(&*state.db_pool)
-        .await
-        .unwrap();
-
-        sqlx::query(
-            r#"
-            INSERT INTO chat_messages (alert_id, role, content, created_at)
-            VALUES (?, ?, ?, ?)
-            "#,
-        )
-        .bind(alert_id)
-        .bind("assistant")
-        .bind("Answer 1")
-        .bind(&timestamp)
-        .execute(&*state.db_pool)
-        .await
-        .unwrap();
-
-        let result = get_alert(State(state), Path(alert_id)).await;
-
-        assert!(result.is_ok());
-        let json = result.unwrap();
-        assert_eq!(json["initial_response"], "Initial response");
-        assert_eq!(json["chat_messages"].as_array().unwrap().len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_delete_alert_not_found() {
-        let state = create_test_state().await;
-        let result = delete_alert(State(state), Path(999)).await;
-
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_delete_alert_success() {
-        let state = create_test_state().await;
-
-        // Insert alert
-        let alert_data = r#"{"message":"test"}"#;
-        let timestamp = models::get_current_timestamp();
-        let alert_id = sqlx::query_scalar::<_, i64>(
-            r#"
-            INSERT INTO alerts (alert_data, initial_response, kind, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            RETURNING id
-            "#,
-        )
-        .bind(alert_data)
-        .bind("response")
-        .bind(models::AlertKind::BgpAlerter.as_str())
-        .bind(&timestamp)
-        .bind(&timestamp)
-        .fetch_one(&*state.db_pool)
-        .await
-        .unwrap();
-
-        // Insert chat message
-        sqlx::query(
-            r#"
-            INSERT INTO chat_messages (alert_id, role, content, created_at)
-            VALUES (?, ?, ?, ?)
-            "#,
-        )
-        .bind(alert_id)
-        .bind("user")
-        .bind("test message")
-        .bind(&timestamp)
-        .execute(&*state.db_pool)
-        .await
-        .unwrap();
-
-        let db_pool = Arc::clone(&state.db_pool);
-        let result = delete_alert(State(state), Path(alert_id)).await;
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), StatusCode::NO_CONTENT);
-
-        // Verify alert is deleted
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM alerts WHERE id = ?")
-            .bind(alert_id)
-            .fetch_one(&*db_pool)
-            .await
-            .unwrap();
-        assert_eq!(count, 0);
-
-        // Verify chat messages are cascade deleted
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM chat_messages WHERE alert_id = ?")
-                .bind(alert_id)
-                .fetch_one(&*db_pool)
-                .await
-                .unwrap();
-        assert_eq!(count, 0);
     }
 
     #[test]
@@ -1135,8 +341,8 @@ mod tests {
     #[tokio::test]
     async fn test_list_mcp_servers_empty() {
         let state = create_test_state().await;
-        let query = Query(ListMcpServersQuery { kind: None });
-        let result = list_mcp_servers(State(state), query).await;
+        let query = Query(routes::mcp::ListMcpServersQuery { kind: None });
+        let result = routes::mcp::list_mcp_servers(State(state), query).await;
 
         assert!(result.is_ok());
         let servers = result.unwrap();
@@ -1154,7 +360,7 @@ mod tests {
             enabled: true,
         };
 
-        let result = create_mcp_server(State(state), Json(payload)).await;
+        let result = routes::mcp::create_mcp_server(State(state), Json(payload)).await;
 
         assert!(result.is_ok());
         let (status, Json(server)) = result.unwrap();
@@ -1176,7 +382,7 @@ mod tests {
             enabled: true,
         };
 
-        let result = create_mcp_server(State(state), Json(payload)).await;
+        let result = routes::mcp::create_mcp_server(State(state), Json(payload)).await;
 
         assert!(result.is_ok());
         let (status, Json(server)) = result.unwrap();
@@ -1202,7 +408,7 @@ mod tests {
             enabled: true,
         };
 
-        let result = create_mcp_server(State(state), Json(payload)).await;
+        let result = routes::mcp::create_mcp_server(State(state), Json(payload)).await;
 
         assert!(result.is_err());
         let (status, _) = result.unwrap_err();
@@ -1221,10 +427,10 @@ mod tests {
         };
 
         // Create first server
-        let _ = create_mcp_server(State(state.clone()), Json(payload.clone())).await;
+        let _ = routes::mcp::create_mcp_server(State(state.clone()), Json(payload.clone())).await;
 
         // Try to create duplicate
-        let result = create_mcp_server(State(state), Json(payload)).await;
+        let result = routes::mcp::create_mcp_server(State(state), Json(payload)).await;
 
         assert!(result.is_err());
         let (status, _) = result.unwrap_err();
@@ -1243,13 +449,14 @@ mod tests {
             enabled: true,
         };
 
-        let (_, Json(created)) = create_mcp_server(State(state.clone()), Json(payload))
-            .await
-            .unwrap();
+        let (_, Json(created)) =
+            routes::mcp::create_mcp_server(State(state.clone()), Json(payload))
+                .await
+                .unwrap();
 
         // Get the server
         let created_id = created.meta().id;
-        let result = get_mcp_server(State(state), Path(created_id)).await;
+        let result = routes::mcp::get_mcp_server(State(state), Path(created_id)).await;
 
         assert!(result.is_ok());
         let Json(server) = result.unwrap();
@@ -1260,7 +467,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_mcp_server_not_found() {
         let state = create_test_state().await;
-        let result = get_mcp_server(State(state), Path(9999)).await;
+        let result = routes::mcp::get_mcp_server(State(state), Path(9999)).await;
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), StatusCode::NOT_FOUND);
@@ -1278,9 +485,10 @@ mod tests {
             enabled: true,
         };
 
-        let (_, Json(created)) = create_mcp_server(State(state.clone()), Json(payload))
-            .await
-            .unwrap();
+        let (_, Json(created)) =
+            routes::mcp::create_mcp_server(State(state.clone()), Json(payload))
+                .await
+                .unwrap();
 
         // Update the server
         let update = models::UpdateMcpServer {
@@ -1290,7 +498,9 @@ mod tests {
             ..Default::default()
         };
 
-        let result = update_mcp_server(State(state), Path(created.meta().id), Json(update)).await;
+        let result =
+            routes::mcp::update_mcp_server(State(state), Path(created.meta().id), Json(update))
+                .await;
 
         assert!(result.is_ok());
         let Json(updated) = result.unwrap();
@@ -1318,7 +528,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = update_mcp_server(State(state), Path(9999), Json(update)).await;
+        let result = routes::mcp::update_mcp_server(State(state), Path(9999), Json(update)).await;
 
         assert!(result.is_err());
         let (status, _) = result.unwrap_err();
@@ -1337,19 +547,20 @@ mod tests {
             enabled: true,
         };
 
-        let (_, Json(created)) = create_mcp_server(State(state.clone()), Json(payload))
-            .await
-            .unwrap();
+        let (_, Json(created)) =
+            routes::mcp::create_mcp_server(State(state.clone()), Json(payload))
+                .await
+                .unwrap();
 
         // Delete the server
         let created_id = created.meta().id;
-        let result = delete_mcp_server(State(state.clone()), Path(created_id)).await;
+        let result = routes::mcp::delete_mcp_server(State(state.clone()), Path(created_id)).await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), StatusCode::NO_CONTENT);
 
         // Verify it's gone
-        let get_result = get_mcp_server(State(state), Path(created_id)).await;
+        let get_result = routes::mcp::get_mcp_server(State(state), Path(created_id)).await;
         assert!(get_result.is_err());
         assert_eq!(get_result.unwrap_err(), StatusCode::NOT_FOUND);
     }
@@ -1357,7 +568,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_mcp_server_not_found() {
         let state = create_test_state().await;
-        let result = delete_mcp_server(State(state), Path(9999)).await;
+        let result = routes::mcp::delete_mcp_server(State(state), Path(9999)).await;
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), StatusCode::NOT_FOUND);
@@ -1383,11 +594,11 @@ mod tests {
             enabled: false,
         };
 
-        let _ = create_mcp_server(State(state.clone()), Json(server1)).await;
-        let _ = create_mcp_server(State(state.clone()), Json(server2)).await;
+        let _ = routes::mcp::create_mcp_server(State(state.clone()), Json(server1)).await;
+        let _ = routes::mcp::create_mcp_server(State(state.clone()), Json(server2)).await;
 
-        let query = Query(ListMcpServersQuery { kind: None });
-        let result = list_mcp_servers(State(state), query).await;
+        let query = Query(routes::mcp::ListMcpServersQuery { kind: None });
+        let result = routes::mcp::list_mcp_servers(State(state), query).await;
 
         assert!(result.is_ok());
         let servers = result.unwrap();

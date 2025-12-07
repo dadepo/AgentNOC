@@ -7,6 +7,7 @@ mod native_mcps;
 
 use alerts::http;
 use std::fs::OpenOptions;
+use std::sync::Arc;
 use tokio::sync::broadcast;
 
 use color_eyre::Result;
@@ -36,8 +37,9 @@ async fn main() -> Result<()> {
     let (tx, _) = broadcast::channel::<String>(100);
 
     // Spawn server task
-    let config_clone = config.clone();
-    let server_handle = tokio::spawn(async move { http::server::start(tx, config_clone).await });
+    let config_arc = Arc::new(config);
+    let server_handle =
+        tokio::spawn(async move { http::server::start(tx, Arc::clone(&config_arc)).await });
 
     // Wait a moment for server to start, then open browser
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
