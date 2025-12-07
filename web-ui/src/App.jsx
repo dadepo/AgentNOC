@@ -137,10 +137,18 @@ function App() {
       })
 
       if (!response.ok) {
-        throw new Error('Failed to send message')
+        const errorText = await response.text()
+        console.error('Chat API error:', response.status, errorText)
+        throw new Error(`Failed to send message: ${response.status}`)
       }
 
       const result = await response.json()
+      
+      // Validate response structure
+      if (!result || typeof result.response !== 'string' || !result.message_id) {
+        console.error('Invalid response structure:', result)
+        throw new Error('Invalid response format from server')
+      }
 
       // Replace loading message with actual response
       setSelectedAlertData((prev) => {
@@ -162,7 +170,7 @@ function App() {
       })
     } catch (err) {
       console.error('Error sending message:', err)
-      setError('Failed to send message. Please try again.')
+      setError(`Failed to send message: ${err.message}`)
 
       // Remove the optimistic messages on error
       setSelectedAlertData((prev) => {
@@ -408,9 +416,16 @@ function App() {
         break
 
       case 'chat_message':
-        // If the selected alert matches, refresh its details
-        if (event.alert_id === selectedAlertId) {
-          fetchAlertDetails(selectedAlertId)
+        // Don't refresh if we're currently sending a message (we already have the data)
+        // Only refresh if we're not actively sending (e.g., message from another session)
+        if (event.alert_id === selectedAlertId && !loading.sendingMessage) {
+          // Small delay to avoid race condition with optimistic updates
+          setTimeout(() => {
+            fetchAlertDetails(selectedAlertId).catch((err) => {
+              console.error('Error refreshing alert details after chat message:', err)
+              // Don't show error to user, just log it
+            })
+          }, 100)
         }
         break
 
