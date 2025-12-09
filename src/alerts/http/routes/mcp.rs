@@ -6,15 +6,36 @@ use axum::{
     http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
 use crate::alerts::http::server::AppState;
 
+use models::{CreateMcpServer, McpServer, UpdateMcpServer};
+
 /// List all MCP servers
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema, IntoParams)]
 pub struct ListMcpServersQuery {
     pub kind: Option<String>,
 }
 
+#[derive(IntoParams)]
+pub struct McpServerId {
+    /// MCP Server ID
+    #[allow(dead_code)]
+    pub id: i64,
+}
+
+/// List all MCP servers
+#[utoipa::path(
+    get,
+    path = "/api/mcps",
+    params(ListMcpServersQuery),
+    responses(
+        (status = 200, description = "List of MCP servers", body = Vec<McpServer>),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mcp"
+)]
 pub async fn list_mcp_servers(
     State(state): State<AppState>,
     Query(query): Query<ListMcpServersQuery>,
@@ -31,6 +52,17 @@ pub async fn list_mcp_servers(
 }
 
 /// Get a single MCP server by ID
+#[utoipa::path(
+    get,
+    path = "/api/mcps/{id}",
+    params(McpServerId),
+    responses(
+        (status = 200, description = "MCP server found", body = McpServer),
+        (status = 404, description = "MCP server not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mcp"
+)]
 pub async fn get_mcp_server(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -49,6 +81,18 @@ pub async fn get_mcp_server(
 }
 
 /// Create a new MCP server
+#[utoipa::path(
+    post,
+    path = "/api/mcps",
+    request_body = CreateMcpServer,
+    responses(
+        (status = 201, description = "MCP server created successfully", body = McpServer),
+        (status = 400, description = "Bad request - validation error", body = serde_json::Value),
+        (status = 409, description = "Conflict - server with this name already exists", body = serde_json::Value),
+        (status = 500, description = "Internal server error", body = serde_json::Value)
+    ),
+    tag = "mcp"
+)]
 pub async fn create_mcp_server(
     State(state): State<AppState>,
     Json(payload): Json<models::CreateMcpServer>,
@@ -84,6 +128,19 @@ pub async fn create_mcp_server(
 }
 
 /// Update an existing MCP server
+#[utoipa::path(
+    put,
+    path = "/api/mcps/{id}",
+    params(McpServerId),
+    request_body = UpdateMcpServer,
+    responses(
+        (status = 200, description = "MCP server updated successfully", body = McpServer),
+        (status = 404, description = "MCP server not found", body = serde_json::Value),
+        (status = 409, description = "Conflict - server with this name already exists", body = serde_json::Value),
+        (status = 500, description = "Internal server error", body = serde_json::Value)
+    ),
+    tag = "mcp"
+)]
 pub async fn update_mcp_server(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -117,6 +174,17 @@ pub async fn update_mcp_server(
 }
 
 /// Delete an MCP server
+#[utoipa::path(
+    delete,
+    path = "/api/mcps/{id}",
+    params(McpServerId),
+    responses(
+        (status = 204, description = "MCP server deleted successfully"),
+        (status = 404, description = "MCP server not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "mcp"
+)]
 pub async fn delete_mcp_server(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -136,7 +204,7 @@ pub async fn delete_mcp_server(
 }
 
 /// Test connection response
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct TestConnectionResponse {
     pub success: bool,
     pub tool_count: Option<usize>,
@@ -144,6 +212,17 @@ pub struct TestConnectionResponse {
 }
 
 /// Test connection to an MCP server
+#[utoipa::path(
+    post,
+    path = "/api/mcps/{id}/test",
+    params(McpServerId),
+    responses(
+        (status = 200, description = "Connection test result", body = TestConnectionResponse),
+        (status = 404, description = "MCP server not found", body = TestConnectionResponse),
+        (status = 500, description = "Internal server error", body = TestConnectionResponse)
+    ),
+    tag = "mcp"
+)]
 pub async fn test_mcp_server(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -199,12 +278,22 @@ pub async fn test_mcp_server(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct EnableNativeRequest {
     pub enabled: bool,
 }
 
 /// Enable or disable native MCP servers
+#[utoipa::path(
+    post,
+    path = "/api/mcps/enable-native",
+    request_body = EnableNativeRequest,
+    responses(
+        (status = 204, description = "Native MCP servers enabled/disabled successfully"),
+        (status = 500, description = "Internal server error", body = serde_json::Value)
+    ),
+    tag = "mcp"
+)]
 pub async fn enable_native_mcp_servers(
     State(state): State<AppState>,
     Json(payload): Json<EnableNativeRequest>,

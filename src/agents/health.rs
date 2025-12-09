@@ -5,12 +5,13 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::time::Duration;
+use utoipa::ToSchema;
 
 use crate::config::AppConfig;
 use crate::database::db::get_enabled_mcp_servers;
 use crate::mcp_clients;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct HealthStatus {
     pub status: String,
     pub services: HashMap<String, String>,

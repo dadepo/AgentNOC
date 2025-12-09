@@ -15,6 +15,15 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::alerts::http::server::{AppState, SseEvent};
 
+/// Server-sent events stream for real-time updates
+#[utoipa::path(
+    get,
+    path = "/api/messages/stream",
+    responses(
+        (status = 200, description = "SSE stream", content_type = "text/event-stream")
+    ),
+    tag = "streaming"
+)]
 pub async fn message_stream(
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
@@ -31,6 +40,16 @@ pub async fn message_stream(
     )
 }
 
+/// Health check endpoint
+#[utoipa::path(
+    get,
+    path = "/api/health",
+    responses(
+        (status = 200, description = "Health status", body = health::HealthStatus),
+        (status = 500, description = "Health check failed")
+    ),
+    tag = "health"
+)]
 pub async fn health_check(
     State(state): State<AppState>,
 ) -> Result<Json<health::HealthStatus>, StatusCode> {
