@@ -11,12 +11,16 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use utoipa::ToSchema;
 
 use crate::config::{AppConfig, PrefixesConfig};
 
+use super::openapi::ApiDoc;
 use super::routes;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, ToSchema)]
 #[serde(tag = "type")]
 pub enum SseEvent {
     #[serde(rename = "new_alert")]
@@ -87,6 +91,11 @@ pub async fn start(tx: broadcast::Sender<String>, config: Arc<AppConfig>) -> Res
         .route(
             "/api/mcps/enable-native",
             post(routes::mcp::enable_native_mcp_servers),
+        )
+        // OpenAPI documentation
+        .merge(
+            SwaggerUi::new("/swagger-ui")
+                .url("/api-docs/openapi.json", <ApiDoc as OpenApi>::openapi()),
         )
         // Serve static files as fallback (must be last)
         // For SPA routing, serve index.html for all non-API routes
@@ -159,14 +168,14 @@ async fn serve_spa(uri: Uri) -> Response {
     }
 }
 
-#[derive(Clone, Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug, ToSchema)]
 pub struct BGPAlerterAlert {
     pub message: String,
     pub description: String,
     pub details: Details,
 }
 
-#[derive(Clone, Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Serialize, Debug, ToSchema)]
 pub struct Details {
     pub prefix: String,
     #[serde(default)]

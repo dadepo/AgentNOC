@@ -6,14 +6,33 @@ use axum::{
     http::StatusCode,
 };
 use serde::Deserialize;
+use utoipa::{IntoParams, ToSchema};
 
 use crate::alerts::http::server::{AppState, BGPAlerterAlert, SseEvent};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct ChatRequest {
     pub message: String,
 }
 
+#[derive(IntoParams)]
+pub struct AlertId {
+    /// Alert ID
+    #[allow(dead_code)]
+    pub id: i64,
+}
+
+/// Process a new BGP alert
+#[utoipa::path(
+    post,
+    path = "/api/alerts",
+    request_body = BGPAlerterAlert,
+    responses(
+        (status = 200, description = "Alert processed successfully", body = serde_json::Value),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "alerts"
+)]
 pub async fn process_alert(
     State(state): State<AppState>,
     Json(payload): Json<BGPAlerterAlert>,
@@ -112,6 +131,16 @@ pub async fn process_alert(
     }
 }
 
+/// List all alerts
+#[utoipa::path(
+    get,
+    path = "/api/alerts",
+    responses(
+        (status = 200, description = "List of all alerts", body = Vec<serde_json::Value>),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "alerts"
+)]
 pub async fn list_alerts(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
@@ -123,6 +152,18 @@ pub async fn list_alerts(
     Ok(Json(alerts))
 }
 
+/// Get a specific alert by ID
+#[utoipa::path(
+    get,
+    path = "/api/alerts/{id}",
+    params(AlertId),
+    responses(
+        (status = 200, description = "Alert found", body = serde_json::Value),
+        (status = 404, description = "Alert not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "alerts"
+)]
 pub async fn get_alert(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -138,6 +179,19 @@ pub async fn get_alert(
     }
 }
 
+/// Chat with an alert using AI
+#[utoipa::path(
+    post,
+    path = "/api/alerts/{id}/chat",
+    params(AlertId),
+    request_body = ChatRequest,
+    responses(
+        (status = 200, description = "Chat response", body = serde_json::Value),
+        (status = 404, description = "Alert not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "alerts"
+)]
 pub async fn chat_with_alert(
     State(state): State<AppState>,
     Path(id): Path<i64>,
@@ -213,6 +267,18 @@ pub async fn chat_with_alert(
     })))
 }
 
+/// Delete an alert
+#[utoipa::path(
+    delete,
+    path = "/api/alerts/{id}",
+    params(AlertId),
+    responses(
+        (status = 204, description = "Alert deleted successfully"),
+        (status = 404, description = "Alert not found"),
+        (status = 500, description = "Internal server error")
+    ),
+    tag = "alerts"
+)]
 pub async fn delete_alert(
     State(state): State<AppState>,
     Path(id): Path<i64>,

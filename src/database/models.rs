@@ -3,9 +3,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use utoipa::ToSchema;
 
 /// Common metadata for all MCP servers
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct McpServerDetails {
     pub id: i64,
     pub name: String,
@@ -18,7 +19,7 @@ pub struct McpServerDetails {
 }
 
 /// MCP Server configuration - enum with transport-specific variants
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "transport_type", rename_all = "lowercase")]
 pub enum McpServer {
     Http {
@@ -114,7 +115,7 @@ impl McpServer {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "transport_type", rename_all = "lowercase")]
 pub enum CreateMcpServer {
     Http {
@@ -178,7 +179,7 @@ impl CreateMcpServer {
 }
 
 /// Note: transport_type cannot be changed after creation
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
 pub struct UpdateMcpServer {
     pub name: Option<String>,
     pub description: Option<String>,
@@ -189,7 +190,7 @@ pub struct UpdateMcpServer {
     pub enabled: Option<bool>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AlertKind {
     BgpAlerter,
@@ -214,7 +215,7 @@ impl TryFrom<&str> for AlertKind {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct Alert {
     pub id: i64,
     pub alert_data: Value,
@@ -224,7 +225,7 @@ pub struct Alert {
     pub updated_at: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ChatMessage {
     pub id: i64,
     pub alert_id: i64,
